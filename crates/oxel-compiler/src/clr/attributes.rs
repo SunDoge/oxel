@@ -110,22 +110,32 @@ pub(super) fn byref_like_types(metadata: &Metadata) -> HashSet<u32> {
         .collect()
 }
 
-pub(super) fn readonly_parameters(metadata: &Metadata) -> HashSet<u32> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReadonlyParameter {
+    In,
+    RequiresLocation,
+}
+
+pub(super) fn readonly_parameters(metadata: &Metadata) -> HashMap<u32, ReadonlyParameter> {
     metadata
         .custom_attributes
         .iter()
-        .filter(|attribute| {
-            attribute.parent.table == Some(TableId::Param)
-                && matches!(
-                    constructor(metadata, attribute.attr_type),
-                    Some((
-                        "System.Runtime.CompilerServices",
-                        "IsReadOnlyAttribute" | "RequiresLocationAttribute",
-                        [0x20, 0, 0x01]
-                    ))
-                )
+        .filter_map(|attribute| {
+            if attribute.parent.table != Some(TableId::Param) {
+                return None;
+            }
+            let ("System.Runtime.CompilerServices", name, [0x20, 0, 0x01]) =
+                constructor(metadata, attribute.attr_type)?
+            else {
+                return None;
+            };
+            let kind = match name {
+                "IsReadOnlyAttribute" => ReadonlyParameter::In,
+                "RequiresLocationAttribute" => ReadonlyParameter::RequiresLocation,
+                _ => return None,
+            };
+            Some((attribute.parent.row, kind))
         })
-        .map(|attribute| attribute.parent.row)
         .collect()
 }
 

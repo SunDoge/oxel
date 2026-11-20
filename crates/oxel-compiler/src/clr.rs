@@ -1497,7 +1497,7 @@ fn generic_methods(metadata: &Metadata) -> HashMap<u32, Option<GenericMethod>> {
 fn classify_byrefs(
     metadata: &Metadata,
     method: u32,
-    readonly: &HashSet<u32>,
+    readonly: &HashMap<u32, attributes::ReadonlyParameter>,
     modes: &mut [ArgumentMode],
 ) -> bool {
     const IN: u16 = 1;
@@ -1506,9 +1506,10 @@ fn classify_byrefs(
         if let Some(index) = row.sequence.checked_sub(1)
             && let Some(mode @ ArgumentMode::Ref) = modes.get_mut(usize::from(index))
         {
-            match row.flags & (IN | OUT) {
-                0 if !readonly.contains(&id) => {}
-                OUT => *mode = ArgumentMode::Out,
+            match (row.flags & (IN | OUT), readonly.get(&id)) {
+                (0, None) => {}
+                (OUT, None) => *mode = ArgumentMode::Out,
+                (IN, Some(attributes::ReadonlyParameter::In)) => *mode = ArgumentMode::In,
                 _ => return false,
             }
         }

@@ -24,6 +24,7 @@ pub use syntax::{CallSite, call_site, declared_function_signature, valid_identif
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ArgumentMode {
     Value,
+    In,
     Ref,
     Out,
 }
@@ -32,6 +33,7 @@ impl ArgumentMode {
     fn prefix(self) -> &'static str {
         match self {
             Self::Value => "",
+            Self::In => "in ",
             Self::Ref => "ref ",
             Self::Out => "out ",
         }

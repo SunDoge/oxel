@@ -560,6 +560,8 @@ For CLR methods and constructors declared with `params T[]`, pass a compatible a
 
 Pass a local variable by managed reference with `ref value` or `out value` at a CLR method or constructor call. The CLR storage type must match exactly. A `ref` local must be mutable and definitely initialized. An `out` argument can initialize a delayed `let` after the call returns, including when the call returns `false`. If a method can later write the same local again, declare it with `let mut`. Use nullable locals for reference types. A `ref` reference parameter must also have a nullable CLR annotation. Use a local for arguments to these calls. [TryParse and Interlocked example](examples/byref_arguments.oxel) · [C# reference parameters](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters)
 
+Write `in value` to pass a local to a C# `in` parameter on a non-virtual method or constructor. The local must be definitely initialized and have the exact parameter type. An immutable `let` local works because the parameter is read-only. [C# parameter modifiers](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters)
+
 ### Trailing lambdas
 
 Append `{ ... }` to a call to pass a zero-parameter lambda as its last argument. For a delegate with parameters, write `|sender, args| { ... }` after the call and use `_` to discard an unused parameter. The CLR delegate's `Invoke` signature supplies the parameter and return types. A block returning a value uses a tail expression.

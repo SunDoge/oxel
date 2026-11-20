@@ -5453,7 +5453,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 .all(|(index, (actual, source))| {
                     let expected = candidate.parameters[index];
                     match source.argument_mode() {
-                        ArgumentMode::Ref => return expected == actual.ty,
+                        ArgumentMode::Ref | ArgumentMode::In => return expected == actual.ty,
                         ArgumentMode::Out => return expected.non_nullable() == actual.ty.non_nullable(),
                         ArgumentMode::Value => {}
                     }
@@ -5752,6 +5752,7 @@ impl<'a, 'src> Checker<'a, 'src> {
         if arg.argument_mode() != expected_mode {
             let mode = match expected_mode {
                 ArgumentMode::Value => "a by-value",
+                ArgumentMode::In => "an 'in'",
                 ArgumentMode::Ref => "a 'ref'",
                 ArgumentMode::Out => "an 'out'",
             };
@@ -5788,11 +5789,14 @@ impl<'a, 'src> Checker<'a, 'src> {
                 return Err(Diagnostic::new(
                     "E0213",
                     span,
-                    "'ref' and 'out' require a local binding",
+                    format!("'{}' requires a local binding", mode.prefix().trim_end()),
                 ));
             }
         };
-        if !(binding.mutable || mode == ArgumentMode::Out && binding.uninitialized) {
+        if !(mode == ArgumentMode::In
+            || binding.mutable
+            || mode == ArgumentMode::Out && binding.uninitialized)
+        {
             let error = Diagnostic::new("E0204", span, format!("binding '{name}' is immutable"));
             return Err(if binding.can_make_mutable {
                 suggest_mutable(error, binding.definition.start)
@@ -5804,7 +5808,7 @@ impl<'a, 'src> Checker<'a, 'src> {
             || self
                 .types
                 .satisfies_type_bound(ty, self.bounds, TypeBoundKind::Value);
-        if !(value || ty.is_nullable()) {
+        if !(mode == ArgumentMode::In || value || ty.is_nullable()) {
             return Err(Diagnostic::new(
                 "E0213",
                 span,

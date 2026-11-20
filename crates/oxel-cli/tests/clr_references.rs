@@ -2186,7 +2186,12 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public static void Clear(ref string? value) => value = null;
             public static void Set(out int value, int input = 10) => value = input;
             public static void Both(out int first, out int second) { first = 1; second = 2; }
-            public static void ReadOnly(in int input) { }
+            public static int ReadOnly(in int input) => input + 1;
+            public static int Pick(int value) => value;
+            public static int Pick(in int value) => value + 1;
+            public static int Length(in string text) => text.Length;
+            public static void Location(ref readonly int value) { }
+            public static void InputFlag([System.Runtime.InteropServices.In] ref int value) => value++;
         }
         "#,
         None,
@@ -2227,12 +2232,20 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             let empty: string?;
             ByRef.Api.Next(out empty);
             System.Console.WriteLine(empty ?? "empty");
+
+            System.Console.WriteLine(ByRef.Api.ReadOnly(in number));
+            System.Console.WriteLine(ByRef.Api.Pick(count));
+            System.Console.WriteLine(ByRef.Api.Pick(in count));
+            let word = "hello";
+            System.Console.WriteLine(ByRef.Api.Length(in word));
         }
         "#,
     );
     assert_eq!(
         successful(output).lines().collect::<Vec<_>>(),
-        ["30", "11", "11", "30", "yes", "cleared", "empty"]
+        [
+            "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "5"
+        ]
     );
 
     for (body, code) in [
@@ -2246,7 +2259,13 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         ),
         ("let x = 1; ByRef.Api.Set(out x);", "E0204"),
         ("let x: string; ByRef.Api.Next(out x);", "E0213"),
-        ("let mut x = 1; ByRef.Api.ReadOnly(ref x);", "E0203"),
+        ("let mut x = 1; ByRef.Api.ReadOnly(ref x);", "E0213"),
+        ("let x = 1; ByRef.Api.ReadOnly(x);", "E0213"),
+        ("let x: i32; ByRef.Api.ReadOnly(in x);", "E0321"),
+        ("let x: i64 = 1; ByRef.Api.ReadOnly(in x);", "E0205"),
+        ("let x: string? = null; ByRef.Api.Length(in x);", "E0205"),
+        ("let x = 1; ByRef.Api.Location(in x);", "E0203"),
+        ("let x = 1; ByRef.Api.InputFlag(in x);", "E0203"),
         (
             "let code: i32; let reader = new ByRef.Reader(out code); let mut x: i32; reader.Pick(ref x);",
             "E0321",

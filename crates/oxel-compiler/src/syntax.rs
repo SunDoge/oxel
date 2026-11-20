@@ -702,6 +702,7 @@ pub(crate) struct FunctionParameter<'src> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParameterPassing {
     Value,
+    In,
     Ref,
     Out,
     Utf8,
@@ -711,6 +712,7 @@ impl ParameterPassing {
     pub fn mode(self) -> ArgumentMode {
         match self {
             Self::Value | Self::Utf8 => ArgumentMode::Value,
+            Self::In => ArgumentMode::In,
             Self::Ref => ArgumentMode::Ref,
             Self::Out => ArgumentMode::Out,
         }
@@ -2349,6 +2351,7 @@ impl<'src> Parser<'src> {
             return None;
         }
         let passing = match self.text(token) {
+            "in" if !native => ParameterPassing::In,
             "ref" => ParameterPassing::Ref,
             "out" => ParameterPassing::Out,
             "utf8" if native => ParameterPassing::Utf8,

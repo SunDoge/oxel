@@ -282,7 +282,7 @@ impl Analysis<'_, '_> {
         match &expr.kind {
             ExprKind::Load(Value::Local(index))
             | ExprKind::CaptureCell(Value::Local(index))
-            | ExprKind::LocalAddress(Value::Local(index), ArgumentMode::Ref) => {
+            | ExprKind::LocalAddress(Value::Local(index), ArgumentMode::Ref | ArgumentMode::In) => {
                 if let Some(&slot) = self.slots.get(index)
                     && state.as_ref().expect("reachable expression")[slot] != Status::Assigned
                 {
