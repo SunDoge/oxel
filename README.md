@@ -24,7 +24,7 @@ Use `fn main(args: string[]) -> i32` to receive command-line arguments and retur
 
 An entry point with no return type returns `void` and exits with status 0 on normal completion. An entry point returning the module's `Result<T, E>` can use `?`. `Ok(i32)` supplies the exit code and other successful payloads give status 0. `Err(error)` writes the error to standard error and gives status 1. [Result entry point example](examples/result_main.oxel)
 
-With `--framework`, an asynchronous entry point is a `fn main` that returns `System.Threading.Tasks.Task`, `Task<i32>`, or `Task<Result<T, E>>`. Use .NET task APIs in its body. The generated CLR entry point waits for the task and uses the same exit conventions for the completed value. A faulted task propagates its original exception. Run `oxel run --framework examples/async_main.oxel -- ready` to try the asynchronous example. [Asynchronous entry point example](examples/async_main.oxel)
+With `--framework`, an asynchronous entry point is a `fn main` that returns a CLR `System.Threading.Tasks.Task` or `ValueTask`. Both support the non-generic form and generic results of `i32` or `Result<T, E>`. Use .NET task APIs in its body. The generated CLR entry point waits for the task and uses the same exit conventions for the completed value. A faulted task propagates its original exception. Run `oxel run --framework examples/async_main.oxel -- ready` to try the asynchronous example. [Asynchronous entry point example](examples/async_main.oxel)
 
 ```sh
 oxel run examples/arguments.oxel -- "two words" --flag

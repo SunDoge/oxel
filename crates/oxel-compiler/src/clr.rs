@@ -1153,13 +1153,16 @@ impl References {
         self.builtin_receivers.get(&ty).copied()
     }
 
-    pub(crate) fn is_task(&self, id: usize) -> bool {
+    pub(crate) fn is_entry_task(&self, id: usize) -> bool {
         let ty = self.imported_type(id);
         let assembly = self.assembly(ty.assembly);
         assembly.framework
             && builtin_assembly(&assembly.name) == Some(0)
             && ty.namespace == "System.Threading.Tasks"
-            && matches!(ty.name.as_str(), "Task" | "Task`1")
+            && matches!(
+                ty.name.as_str(),
+                "Task" | "Task`1" | "ValueTask" | "ValueTask`1"
+            )
     }
 
     pub(crate) fn is_value_base(&self, id: usize) -> bool {

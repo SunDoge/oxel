@@ -1679,6 +1679,57 @@ fn calls_static_members_on_constructed_clr_classes() {
     }
 }
 
+#[test]
+fn value_task_entry_waits_for_a_pending_clr_source() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let sdk = successful(Command::new("dotnet").arg("--version").output().unwrap());
+    let reference = build_reference_fixture(
+        &project.join("fixture"),
+        sdk.split('.').next().unwrap(),
+        "TaskBridge",
+        "1.0.0.0",
+        r#"
+        using System;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using System.Threading.Tasks.Sources;
+
+        public sealed class TaskBridge : IValueTaskSource<int> {
+            private ManualResetValueTaskSourceCore<int> source;
+
+            public static ValueTask<int> Start() {
+                var pending = new TaskBridge();
+                return new ValueTask<int>(pending, pending.source.Version);
+            }
+
+            public int GetResult(short token) => source.GetResult(token);
+            public ValueTaskSourceStatus GetStatus(short token) => source.GetStatus(token);
+
+            public void OnCompleted(Action<object?> continuation, object? state,
+                                    short token, ValueTaskSourceOnCompletedFlags flags) {
+                source.OnCompleted(continuation, state, token, flags);
+                ThreadPool.QueueUserWorkItem(_ => source.SetResult(42));
+            }
+        }
+        "#,
+        None,
+    );
+    fs::write(
+        project.join("main.oxel"),
+        "fn main() -> System.Threading.Tasks.ValueTask<i32> { TaskBridge.Start() }",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
+        .current_dir(project)
+        .args(["run", "--framework", "main.oxel", "--reference"])
+        .arg(reference)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
 fn build_reference_fixture(
     directory: &std::path::Path,
     sdk_major: &str,

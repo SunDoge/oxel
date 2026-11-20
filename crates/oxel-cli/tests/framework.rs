@@ -49,6 +49,16 @@ fn task_entry_point_awaits_completion_and_maps_the_result() {
             "System.Threading.Tasks.Task.FromResult(42)",
             42,
         ),
+        (
+            "ValueTask",
+            "new System.Threading.Tasks.ValueTask(System.Threading.Tasks.Task.Delay(10))",
+            0,
+        ),
+        (
+            "ValueTask<i32>",
+            "new System.Threading.Tasks.ValueTask<i32>(42)",
+            42,
+        ),
     ] {
         fs::write(
             &main,

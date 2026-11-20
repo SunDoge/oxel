@@ -12,10 +12,14 @@ pub(super) struct Entry {
 }
 
 struct Task {
-    get_awaiter: Member,
-    awaiter: Type,
-    get_result: Member,
-    output: Type,
+    as_task: Option<AwaitCall>,
+    get_awaiter: AwaitCall,
+    get_result: AwaitCall,
+}
+
+struct AwaitCall {
+    member: Member,
+    result: Type,
 }
 
 struct ResultExit {
@@ -34,7 +38,7 @@ impl Entry {
     ) -> Checked<Self> {
         let ty = signature.result;
         let task = Task::resolve(types, ty, span)?;
-        let output = task.as_ref().map_or(ty, |task| task.output);
+        let output = task.as_ref().map_or(ty, |task| task.get_result.result);
         let result = CarrierLayout::for_type(types, output)
             .and_then(|layout| layout.error_field.map(|error_field| (layout, error_field)))
             .map(|(layout, error_field)| {
@@ -50,7 +54,7 @@ impl Entry {
             return Err(Diagnostic::new(
                 "E0206",
                 span,
-                "main must return void, i32, Result<T, E>, Task, Task<i32>, or Task<Result<T, E>>",
+                "main must return void, i32, Result<T, E>, or a CLR Task or ValueTask with one of those results",
             ));
         }
         Ok(Self {
@@ -80,8 +84,7 @@ impl Entry {
         );
         let mut locals = Vec::new();
         if let Some(task) = &self.task {
-            locals.push(task.awaiter);
-            value = task.await_result(value, span);
+            value = task.await_result(value, &mut locals);
         }
         if let Some(result) = &self.result {
             let local = locals.len() as u16;
@@ -115,71 +118,85 @@ impl Task {
         if ty.is_nullable()
             || !types
                 .ancestor_id(ty)
-                .is_some_and(|id| types.references.is_task(id))
+                .is_some_and(|id| types.references.is_entry_task(id))
         {
             return Ok(None);
         }
-        let method = |owner, name| {
-            types
-                .instance_candidates(owner, name)
-                .into_iter()
-                .find(|member| {
-                    let method = types.references.method(member.id);
-                    matches!(method.invocation, Invocation::Instance)
-                        && method.signature.type_arity == 0
-                        && method.signature.parameters.is_empty()
-                })
-                .ok_or_else(|| {
-                    Diagnostic::new(
-                        "E0206",
-                        span,
-                        format!("CLR Task entry point requires {name}"),
-                    )
-                })
-        };
-        let get_awaiter = method(ty, "GetAwaiter")?;
-        let awaiter = types.method_signature(get_awaiter, span)?.result;
-        if !awaiter.clr_struct() {
+        let method = |owner, name| AwaitCall::resolve(types, owner, name, span);
+        // A ValueTask backed by an IValueTaskSource need not block in GetResult.
+        // Convert it once so the native entry point can safely wait on a Task.
+        let as_task = ty.clr_struct().then(|| method(ty, "AsTask")).transpose()?;
+        let task = as_task.as_ref().map_or(ty, |call| call.result);
+        let get_awaiter = method(task, "GetAwaiter")?;
+        if !get_awaiter.result.clr_struct() {
             return Err(Diagnostic::new(
                 "E0206",
                 span,
                 "CLR Task entry point requires a value-type awaiter",
             ));
         }
-        let get_result = method(awaiter, "GetResult")?;
-        let output = types.method_signature(get_result, span)?.result;
+        let get_result = method(get_awaiter.result, "GetResult")?;
         Ok(Some(Self {
+            as_task,
             get_awaiter,
-            awaiter,
             get_result,
-            output,
         }))
     }
 
-    fn await_result(&self, value: Expr, span: Span) -> Expr {
-        let awaiter = expr(
+    fn await_result(&self, mut value: Expr, locals: &mut Vec<Type>) -> Expr {
+        if let Some(as_task) = &self.as_task {
+            value = as_task.lower(value, locals);
+        }
+        let awaiter = self.get_awaiter.lower(value, locals);
+        self.get_result.lower(awaiter, locals)
+    }
+}
+
+impl AwaitCall {
+    fn resolve(types: &Structs<'_, '_>, owner: Type, name: &str, span: Span) -> Checked<Self> {
+        let member = types
+            .instance_candidates(owner, name)
+            .into_iter()
+            .find(|member| {
+                let method = types.references.method(member.id);
+                matches!(method.invocation, Invocation::Instance)
+                    && method.signature.type_arity == 0
+                    && method.signature.parameters.is_empty()
+            })
+            .ok_or_else(|| {
+                Diagnostic::new(
+                    "E0206",
+                    span,
+                    format!("CLR task entry point requires {name}"),
+                )
+            })?;
+        let result = types.method_signature(member, span)?.result;
+        Ok(Self { member, result })
+    }
+
+    fn lower(&self, receiver: Expr, locals: &mut Vec<Type>) -> Expr {
+        let span = receiver.span;
+        let kind = if receiver.ty.clr_struct() {
+            let temporary = locals.len() as u16;
+            locals.push(receiver.ty);
+            ExprKind::ConstrainedCall {
+                method: self.member,
+                type_arguments: Box::new([]),
+                receiver: Box::new(receiver),
+                temporary: Some(temporary),
+                args: Vec::new(),
+            }
+        } else {
             ExprKind::Call(
                 Target::External {
-                    method: self.get_awaiter.id,
-                    owner: self.get_awaiter.owner,
+                    method: self.member.id,
+                    owner: self.member.owner,
                     arguments: Box::new([]),
                 },
-                vec![value],
-            ),
-            self.awaiter,
-            span,
-        );
-        expr(
-            ExprKind::ConstrainedCall {
-                method: self.get_result,
-                type_arguments: Box::new([]),
-                receiver: Box::new(awaiter),
-                temporary: Some(0),
-                args: Vec::new(),
-            },
-            self.output,
-            span,
-        )
+                vec![receiver],
+            )
+        };
+        expr(kind, self.result, span)
     }
 }
 
