@@ -1,0 +1,13 @@
+[package]
+name = "oxel-compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Compiler and incremental analysis engine for the CLR-native oxel language"
+
+[dependencies]
+blake3.workspace = true
+clrmeta = "0.1"
+object = { version = "0.38", default-features = false, features = ["read_core", "write", "pe"] }
+rayon = "1.12"
+self_cell = "1.3"

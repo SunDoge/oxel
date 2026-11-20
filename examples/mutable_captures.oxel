@@ -1,0 +1,31 @@
+fn make_counter() -> System.Action<i32> {
+    let mut count = 0;
+    let step: System.Action<i32> = |delta| {
+        let add: System.Action<i32> = |value| {
+            count += value;
+        };
+        add.Invoke(delta);
+        System.Threading.Interlocked.Increment(ref count);
+        System.Console.WriteLine(count);
+    };
+    count = 9;
+    step
+}
+
+fn main() {
+    let counter = make_counter();
+    counter.Invoke(20);
+    counter.Invoke(1);
+
+    let callbacks = new System.Collections.Generic.List<System.Action>();
+    for seed in 0..2 {
+        let mut local = seed;
+        let step: System.Action = || {
+            local += 1;
+            System.Console.WriteLine(local);
+        };
+        callbacks.Add(step);
+    }
+    callbacks.ForEach() |step| { step.Invoke(); };
+    callbacks.ForEach() |step| { step.Invoke(); };
+}

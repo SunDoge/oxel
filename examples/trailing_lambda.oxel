@@ -1,0 +1,8 @@
+fn main() {
+    let greeting = "oxel";
+    let worker = new System.Threading.Thread() {
+        System.Console.WriteLine($"Hello, {greeting}!");
+    };
+    worker.Start();
+    worker.Join();
+}

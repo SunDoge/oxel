@@ -1,0 +1,3 @@
+[package]
+name = "geometry-demo"
+sources = ["main.oxel", "geometry.oxel"]

@@ -1,0 +1,17 @@
+enum Result<T, E> { Ok(T), Err(E) }
+
+fn describe(input: Result<i32, string>) {
+    let answer = try {
+        let value = input?;
+        value + 10
+    };
+    match answer {
+        Ok(value) => System.Console.WriteLine(value),
+        Err(message) => System.Console.WriteLine(message),
+    };
+}
+
+fn main() {
+    describe(Result.Ok(20));
+    describe(Result.Err("missing value"));
+}

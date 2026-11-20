@@ -1,0 +1,16 @@
+fn read_offset(text: string) -> i32 {
+    10 + try {
+        System.Int32.Parse(text)
+    } catch (_: System.FormatException) {
+        20
+    } catch (error: System.OverflowException) {
+        System.Console.WriteLine(error.GetType().Name);
+        21
+    }
+}
+
+fn main() {
+    System.Console.WriteLine(read_offset("5"));
+    System.Console.WriteLine(read_offset("invalid"));
+    System.Console.WriteLine(read_offset("999999999999999999"));
+}

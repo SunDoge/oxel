@@ -1,0 +1,11 @@
+const MAX: u64 = 18446744073709551615;
+const HALF = MAX / 2;
+
+fn main() {
+    let counter: u16 = 65535;
+    System.Console.WriteLine(counter + 1);
+    System.Console.WriteLine(HALF);
+    for value in MAX - 1..=MAX {
+        System.Console.WriteLine(value);
+    }
+}

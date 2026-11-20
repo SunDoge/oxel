@@ -1,0 +1,5 @@
+fn main() {
+    let cell = new Samples.Interop.Cell<i32>(10);
+    cell[0] += 20;
+    System.Console.WriteLine(cell[0]);
+}

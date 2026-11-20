@@ -1,0 +1,13 @@
+struct User {
+    name: string,
+    age: i32,
+}
+
+fn greet(user: User) -> string {
+    $"Hello, {user.name}. You are {user.age} years old."
+}
+
+fn main() {
+    let user = User { name: "Alice", age: 20 };
+    System.Console.WriteLine(greet(user));
+}

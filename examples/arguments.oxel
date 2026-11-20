@@ -1,0 +1,10 @@
+fn main(args: string[]) -> i32 {
+    if args.Length == 0 {
+        System.Console.WriteLine("Usage: arguments <value>...");
+        return 2;
+    }
+    for argument in args {
+        System.Console.WriteLine($"[{argument}]");
+    }
+    0
+}

@@ -1,0 +1,20 @@
+fn test(label: string, satisfied: bool) -> bool {
+    System.Console.WriteLine(label);
+    satisfied
+}
+
+fn classify(input: Option<i32>) -> string {
+    match input {
+        Some(value) if test("positive?", value > 0) => $"positive: {value}",
+        Some(value) if test("zero?", value == 0) => "zero",
+        Some(value) => $"negative: {value}",
+        None => "missing",
+    }
+}
+
+fn main() {
+    System.Console.WriteLine(classify(Option.Some(30)));
+    System.Console.WriteLine(classify(Option.Some(0)));
+    System.Console.WriteLine(classify(Option.Some(-2)));
+    System.Console.WriteLine(classify(Option.None));
+}

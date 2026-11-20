@@ -1,0 +1,16 @@
+fn first_line(reader: System.IO.StringReader) -> Option<string> {
+    using input = reader {
+        let line = input.ReadLine()?;
+        return Option.Some(line);
+    }
+}
+
+fn main() {
+    let reader = new System.IO.StringReader("oxel");
+    System.Console.WriteLine(first_line(reader) ?? "empty");
+    try {
+        reader.ReadLine();
+    } catch (_: System.ObjectDisposedException) {
+        System.Console.WriteLine("disposed");
+    }
+}

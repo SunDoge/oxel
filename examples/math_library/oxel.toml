@@ -1,0 +1,4 @@
+[package]
+name = "Samples.Math"
+kind = "library"
+sources = ["math.oxel"]

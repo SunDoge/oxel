@@ -1,0 +1,17 @@
+fn main() {
+    let values = new System.Collections.Generic.List<i32>();
+    values.Add(10);
+    values.Add(20);
+
+    let mut total = 0;
+    for value in values {
+        total += value;
+    }
+    System.Console.WriteLine(total);
+
+    let mut count = 0;
+    for value in System.Linq.Enumerable.Range(1, 3) {
+        count += value;
+    }
+    System.Console.WriteLine(count);
+}

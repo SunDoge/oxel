@@ -1,0 +1,9 @@
+const TOTAL = if ENABLED { STEP * 3 } else { 0 };
+const LABEL = "Result" + ":";
+const ENABLED = STEP > 0 && !(STEP == 20);
+const STEP: i32 = 10;
+
+fn main() {
+    System.Console.WriteLine(LABEL);
+    System.Console.WriteLine(TOTAL);
+}

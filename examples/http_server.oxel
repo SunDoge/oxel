@@ -1,0 +1,59 @@
+fn respond(response: System.Net.HttpListenerResponse, status: i32, body: string) {
+    response.StatusCode = status;
+    response.ContentType = "text/plain; charset=utf-8";
+    let bytes = System.Text.Encoding.UTF8.GetBytes(body);
+    response.Close(bytes, true);
+}
+
+fn handle(context: System.Net.HttpListenerContext) {
+    let request = context.Request;
+    let response = context.Response;
+    if request.HttpMethod != "GET" {
+        response.AddHeader("Allow", "GET");
+        respond(response, 405, "method not allowed\n");
+        return;
+    }
+
+    let Some(url) = request.Url else {
+        respond(response, 400, "invalid request URL\n");
+        return;
+    };
+    match url.AbsolutePath {
+        "/health" => respond(response, 200, "ok\n"),
+        "/add" => {
+            let query = request.QueryString;
+            let culture = System.Globalization.CultureInfo.InvariantCulture;
+            let left: i32;
+            let right: i32;
+            if System.Int32.TryParse(query.Get("left"), culture, out left)
+                && System.Int32.TryParse(query.Get("right"), culture, out right)
+            {
+                let sum = (left as i64) + (right as i64);
+                respond(response, 200, sum.ToString(culture) + "\n");
+            } else {
+                respond(response, 400, "left and right must be 32-bit integers\n");
+            }
+        },
+        _ => respond(response, 404, "not found\n"),
+    }
+}
+
+fn main(args: string[]) -> i32 {
+    let culture = System.Globalization.CultureInfo.InvariantCulture;
+    let port: i32;
+    if args.Length != 1 || !System.Int32.TryParse(args[0], culture, out port) || port < 1 || port > 65535 {
+        System.Console.Error.WriteLine("Usage: http_server <port from 1 to 65535>");
+        return 2;
+    }
+
+    let prefix = $"http://127.0.0.1:{port}/";
+    let listener = new System.Net.HttpListener();
+    listener.Prefixes.Add(prefix);
+    listener.Start();
+    System.Console.WriteLine($"Listening on {prefix}");
+    while listener.IsListening {
+        handle(listener.GetContext());
+    }
+    listener.Close();
+    0
+}

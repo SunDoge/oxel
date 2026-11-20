@@ -1,0 +1,6 @@
+[package]
+name = "nuget-json"
+sources = ["main.oxel"]
+
+[nuget]
+"Newtonsoft.Json" = "13.0.3"

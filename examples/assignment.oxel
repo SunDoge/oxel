@@ -1,0 +1,18 @@
+fn choose(first: bool) -> i32 {
+    let selected: i32;
+    if first {
+        selected = 10;
+    } else {
+        selected = 20;
+    }
+    selected
+}
+
+fn main() {
+    let result: i32;
+    while true {
+        result = choose(true) + choose(false);
+        break;
+    }
+    System.Console.WriteLine(result);
+}

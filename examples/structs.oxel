@@ -1,0 +1,28 @@
+struct User {
+    name: string,
+    age: i32,
+}
+
+struct Profile {
+    user: User,
+    active: bool,
+}
+
+fn profile(name: string, age: i32) -> Profile {
+    Profile {
+        active: true,
+        user: User { name: name, age: age },
+    }
+}
+
+fn birthday(user: User) -> User {
+    User { name: user.name, age: user.age + 1 }
+}
+
+fn main() {
+    let account = profile("Alice", 29);
+    if account.active {
+        System.Console.WriteLine("Hello, " + account.user.name);
+        System.Console.WriteLine(birthday(account.user).age);
+    }
+}

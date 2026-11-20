@@ -1,0 +1,23 @@
+fn next(index: i32) -> Option<i32> {
+    if index < 4 {
+        Option.Some(index)
+    } else {
+        Option.None
+    }
+}
+
+fn main() {
+    let label = if let Some(value) = next(0) {
+        $"first: {value}"
+    } else {
+        "empty"
+    };
+    System.Console.WriteLine(label);
+
+    let mut index = 0;
+    while let Some(value) = next({ let current = index; index += 1; current }) {
+        if value == 1 { continue; }
+        System.Console.WriteLine(value);
+    }
+    System.Console.WriteLine(index);
+}

@@ -1,0 +1,52 @@
+internal struct Reading {
+    channel: i16,
+    value: f64,
+}
+
+internal struct Batch {
+    reading: Reading,
+    count: i32,
+}
+
+internal extern "C" fn add(left: i32, right: i32) -> i32 = "oxel_math" as "oxel_add";
+internal extern "C" fn oxel_scale(value: f64, factor: f64) -> f64 = "oxel_math";
+internal extern "C" fn oxel_adjust(sample: Reading, offset: i16, factor: f64) -> Reading = "oxel_math";
+internal extern "C" fn oxel_combine(left: Batch, right: Batch) -> Batch = "oxel_math";
+internal extern "C" fn oxel_record(
+    delta: i32, ref total: i32, ref reading: Reading, out result: Batch,
+) = "oxel_math";
+
+internal extern "C" fn oxel_utf8_length(utf8 text: string?) -> i64 = "oxel_math";
+
+fn main() {
+    System.Console.WriteLine(add(10, 20));
+    System.Console.WriteLine(oxel_scale(2.5, 12.0));
+
+    let adjusted = oxel_adjust(Reading { channel: 4, value: 2.5 }, 3, 8.5);
+    System.Console.WriteLine(adjusted.channel);
+    System.Console.WriteLine(adjusted.value);
+    let combined = oxel_combine(
+        Batch { reading: adjusted, count: 12 },
+        Batch { reading: Reading { channel: 5, value: 20.25 }, count: 18 },
+    );
+    System.Console.WriteLine(combined.reading.channel);
+    System.Console.WriteLine(combined.reading.value);
+    System.Console.WriteLine(combined.count);
+
+    let mut total = combined.count;
+    let mut reading = combined.reading;
+    let result: Batch;
+    oxel_record(5, ref total, ref reading, out result);
+    System.Console.WriteLine(total);
+    System.Console.WriteLine(reading.value);
+    System.Console.WriteLine(result.reading.channel);
+    System.Console.WriteLine(result.reading.value);
+    System.Console.WriteLine(result.count);
+
+    let greeting: Option<string> = Option.Some("你好🌍");
+    let absent: Option<string> = Option.None;
+    System.Console.WriteLine(oxel_utf8_length(greeting));
+    System.Console.WriteLine(oxel_utf8_length(absent));
+    System.Console.WriteLine(oxel_utf8_length(""));
+    System.Console.WriteLine(oxel_utf8_length("A\0B"));
+}

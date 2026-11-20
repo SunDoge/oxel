@@ -1,0 +1,12 @@
+const DECIMAL_STYLE = System.Globalization.NumberStyles.AllowLeadingWhite
+    | System.Globalization.NumberStyles.AllowLeadingSign;
+
+fn main() {
+    let mut access = 0x1 as System.IO.FileAccess;
+    access |= System.IO.FileAccess.Write;
+    System.Console.WriteLine(access == System.IO.FileAccess.ReadWrite);
+    System.Console.WriteLine(access & System.IO.FileAccess.Write == System.IO.FileAccess.Write);
+    System.Console.WriteLine(System.Int32.Parse("  -30", DECIMAL_STYLE));
+    let mask: u8 = 0xff;
+    System.Console.WriteLine(mask & 0b0011_1100);
+}

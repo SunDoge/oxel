@@ -1,0 +1,8 @@
+const TEXT = "A🚀";
+const FIRST = TEXT[0];
+
+fn main() {
+    System.Console.WriteLine(FIRST);
+    System.Console.WriteLine(TEXT.Length);
+    System.Console.WriteLine(TEXT[1] as i32);
+}

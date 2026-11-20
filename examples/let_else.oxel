@@ -1,0 +1,22 @@
+enum Result<T, E> { Ok(T), Err(E) }
+
+fn show(input: Result<Option<i32>, string>) {
+    let value = "unavailable";
+    let Result.Ok(Some(value)) = input else {
+        System.Console.WriteLine(value);
+        return;
+    };
+    System.Console.WriteLine(value);
+}
+
+fn main() {
+    show(Result.Ok(Option.Some(30)));
+    show(Result.Ok(Option.None));
+    show(Result.Err("missing"));
+
+    for index in 0..5 {
+        let false = index == 4 else { break; };
+        let true = index % 2 == 1 else { continue; };
+        System.Console.WriteLine(index);
+    }
+}

@@ -1,0 +1,29 @@
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn divide(a: i32, b: i32) -> Result<i32, string> {
+    if b == 0 {
+        Result.Err("division by zero")
+    } else {
+        Result.Ok(a / b)
+    }
+}
+
+fn divide_twice(a: i32, b: i32, c: i32) -> Result<i32, string> {
+    let first = divide(a, b)?;
+    Result.Ok(divide(first, c)?)
+}
+
+fn print(result: Result<i32, string>) {
+    match result {
+        Ok(value) => System.Console.WriteLine(value),
+        Err(message) => System.Console.WriteLine(message),
+    }
+}
+
+fn main() {
+    print(divide_twice(120, 2, 2));
+    print(divide_twice(120, 2, 0));
+}

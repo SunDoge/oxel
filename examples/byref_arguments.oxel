@@ -1,0 +1,8 @@
+fn main() {
+    let parsed: i32;
+    if System.Int32.TryParse("29", out parsed) {
+        let mut counter = parsed;
+        System.Threading.Interlocked.Increment(ref counter);
+        System.Console.WriteLine(counter);
+    }
+}

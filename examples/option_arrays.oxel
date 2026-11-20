@@ -1,0 +1,12 @@
+struct Slot {
+    label: Option<string>,
+}
+
+fn main() {
+    let slots = new Slot[2];
+    slots[1] = Slot { label: Option.Some("oxel") };
+
+    for slot in slots {
+        System.Console.WriteLine(slot.label ?? "empty");
+    }
+}

@@ -1,0 +1,7 @@
+fn main() {
+    let separator = ", ";
+    System.Console.WriteLine(System.String.Join(separator, "red", "green", "blue"));
+
+    let colors: string?[] = ["cyan", "magenta", "yellow"];
+    System.Console.WriteLine(System.String.Join(separator, colors));
+}

@@ -1,0 +1,30 @@
+struct Payload {
+    value: i32,
+}
+
+fn identity<T>(value: T) -> T {
+    let copy: T = value;
+    copy
+}
+
+fn choose<T, Marker>(first: T, second: T, marker: Marker, use_first: bool) -> T {
+    if use_first {
+        identity(first)
+    } else {
+        identity(second)
+    }
+}
+
+fn main() {
+    let payload = choose(
+        Payload { value: 30 },
+        Payload { value: 40 },
+        true,
+        true,
+    );
+    System.Console.WriteLine(payload.value);
+    let wide: i64 = identity(3000000000);
+    System.Console.WriteLine(wide);
+    System.Console.WriteLine(identity("oxel"));
+    System.Console.WriteLine(identity::<string>("CLR"));
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let json = Newtonsoft.Json.JsonConvert.SerializeObject("oxel");
+    System.Console.WriteLine(json);
+}

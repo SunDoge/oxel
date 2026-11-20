@@ -1,0 +1,24 @@
+fn describe(status: i32, label: Option<string>) -> string {
+    match status {
+        200 => match label {
+            Some("cached") => "cache hit",
+            Some(value) => value,
+            None => "ok",
+        },
+        404 => "not found",
+        -1 => "disconnected",
+        _ => "unexpected status",
+    }
+}
+
+fn main() {
+    System.Console.WriteLine(describe(200, Option.Some("cached")));
+    System.Console.WriteLine(describe(404, Option.None));
+    System.Console.WriteLine(describe(-1, Option.None));
+    let marker = '界';
+    let description = match marker {
+        '界' => "matched character",
+        _ => "other character",
+    };
+    System.Console.WriteLine(description);
+}

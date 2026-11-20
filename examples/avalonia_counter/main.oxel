@@ -1,0 +1,40 @@
+fn counter_window() -> Avalonia.Controls.Window {
+    let mut count = 0;
+    let label = new Avalonia.Controls.TextBlock();
+    label.Text = "Count: 0";
+    label.FontSize = 24.0;
+
+    let increment = new Avalonia.Controls.Button();
+    increment.Content = "Increment";
+    increment.Click += |_, _| {
+        count += 1;
+        label.Text = $"Count: {count}";
+    };
+
+    let panel = new Avalonia.Controls.StackPanel();
+    panel.Margin = new Avalonia.Thickness(24.0);
+    panel.Spacing = 12.0;
+    panel.Children.Add(label);
+    panel.Children.Add(increment);
+
+    let window = new Avalonia.Controls.Window();
+    window.Title = "oxel Counter";
+    window.Width = 320.0;
+    window.Height = 180.0;
+    window.Content = panel;
+    window
+}
+
+fn main(args: string[]) -> i32 {
+    let lifetime = new Avalonia.Controls.ApplicationLifetimes.ClassicDesktopStyleApplicationLifetime();
+    let builder = Avalonia.AppBuilder.Configure::<Avalonia.Application>();
+    let desktop = Avalonia.AppBuilderDesktopExtensions.UsePlatformDetect(builder);
+    desktop.AfterSetup() |setup| {
+        if let Some(app) = setup.Instance {
+            app.Styles.Add(new Avalonia.Themes.Fluent.FluentTheme());
+        }
+    };
+    desktop.SetupWithLifetime(lifetime);
+    lifetime.MainWindow = counter_window();
+    lifetime.Start(args)
+}

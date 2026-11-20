@@ -1,0 +1,26 @@
+struct Sample<T> {
+    value: T,
+}
+
+internal struct Operands {
+    left: i32,
+    right: i32,
+}
+
+internal enum Operation {
+    Add(Operands),
+}
+
+internal fn evaluate(operation: Operation) -> i32 {
+    match operation {
+        Add(values) => values.left + values.right,
+    }
+}
+
+fn sample<T>(value: T) -> Sample<T> {
+    Sample { value: value }
+}
+
+fn add(left: i32, right: i32) -> i32 {
+    evaluate(Operation.Add(Operands { left: left, right: right }))
+}

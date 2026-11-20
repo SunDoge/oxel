@@ -1,0 +1,23 @@
+fn positive(value: i32) -> Option<i32> {
+    if value > 0 { Option.Some(value) } else { Option.None }
+}
+
+fn label(value: Option<i32>) -> Option<string> {
+    Option.Some($"Count: {value?}")
+}
+
+fn describe(input: i32) {
+    let text = try {
+        let value = positive(input)?;
+        label(Option.Some(value + 10))?
+    };
+    match text {
+        Some(value) => System.Console.WriteLine(value),
+        None => System.Console.WriteLine("no count"),
+    };
+}
+
+fn main() {
+    describe(20);
+    describe(0);
+}

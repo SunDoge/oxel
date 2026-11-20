@@ -1,0 +1,23 @@
+struct Layout {
+    width: i32,
+    height: i32,
+}
+
+struct Window {
+    title: string,
+    layout: Layout,
+}
+
+fn main() {
+    let original = Window {
+        title: "Oxel",
+        layout: Layout { width: 640, height: 480 },
+    };
+    let wider = Layout { width: 800, ..original.layout };
+    let updated = Window { layout: wider, ..original };
+
+    let Window { title: title, layout: Layout { width: width, .. } } = updated;
+    System.Console.WriteLine(title);
+    System.Console.WriteLine(width);
+    System.Console.WriteLine(original.layout.width);
+}

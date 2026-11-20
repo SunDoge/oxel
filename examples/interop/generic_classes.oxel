@@ -1,0 +1,33 @@
+fn cell<T>(value: T) -> Samples.Interop.Cell<T> {
+    Samples.Interop.Cell::<T>.From(value)
+}
+
+struct CellView<T: Samples.Interop.IReadCell<i64>> {
+    cell: T,
+}
+
+fn read_cell<T: Samples.Interop.IReadCell<i64>>(view: CellView<T>) -> i64 {
+    view.cell.Read()
+}
+
+fn main() {
+    let number = cell(20);
+    number.Value = number.Value + 10;
+    System.Console.WriteLine(number.Exchange(50));
+
+    let label_text = number.SetAndReturn::<string>(60, "hello");
+    let text = new Samples.Interop.TextCell(label_text);
+    let copy = Samples.Interop.Cells.Copy(text);
+    let label = Samples.Interop.Cells.OptionalLabel() ?? copy;
+    let reader: Samples.Interop.IReadCell<object> = label;
+    System.Console.WriteLine(reader.Read());
+
+    Samples.Interop.CellDefaults::<string>.Initial = label;
+    let count = Samples.Interop.CellDefaults::<i64>.Choose::<bool>(3000000000, true);
+    if count {
+        let view: CellView<Samples.Interop.Cell<i64>> = CellView {
+            cell: Samples.Interop.CellDefaults::<i64>.Initial,
+        };
+        System.Console.WriteLine(read_cell(view));
+    }
+}

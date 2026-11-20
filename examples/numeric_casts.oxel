@@ -1,0 +1,17 @@
+const OFFSET: i16 = (-130.9 as i16) + 1;
+const LARGE = 3000000000 as i64;
+
+fn to_byte(value: f64) -> u8 {
+    value as u8
+}
+
+fn score(raw: i64, weight: f32) -> f64 {
+    (raw as f64) * (weight as f64)
+}
+
+fn main() {
+    System.Console.WriteLine(OFFSET);
+    System.Console.WriteLine(LARGE);
+    System.Console.WriteLine(to_byte(255.9));
+    System.Console.WriteLine(score(60, 0.5));
+}

@@ -1,0 +1,19 @@
+fn sum_multiples(limit: i32) -> i32 {
+    let mut n = 0;
+    let mut sum = 0;
+    while n < limit && sum < 20 {
+        n = n + 1;
+        if n % 3 != 0 {
+            continue;
+        }
+        sum = sum + n;
+        if n == 12 {
+            break;
+        }
+    }
+    sum
+}
+
+fn main() {
+    System.Console.WriteLine(sum_multiples(20));
+}

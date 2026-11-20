@@ -1,0 +1,42 @@
+fn read<T: Samples.Interop.IReadable>(counter: T) -> i32 {
+    counter.Read()
+}
+
+fn edit<T: Samples.Interop.IWritable>(counter: T, value: i32) -> i32 {
+    counter.Value = value;
+    counter.Value
+}
+
+fn edit_local<T: Samples.Interop.IWritable>(counter: T, value: i32) -> i32 {
+    let mut receiver = counter;
+    receiver.Value = value;
+    receiver.Value
+}
+
+fn as_readable<T: Samples.Interop.IReadable>(counter: T) -> Samples.Interop.IReadable {
+    counter
+}
+
+fn dispatch<T: Samples.Interop.Counter + Samples.Interop.IWritable>(counter: T) -> i32 {
+    edit(Samples.Interop.CounterLabel.Keep(counter), 15);
+    read(counter)
+}
+
+fn replace_receiver<T: Samples.Interop.IWritable>(first: T, second: T) -> i32 {
+    let mut receiver = first;
+    receiver.Value = {
+        receiver = second;
+        42
+    };
+    first.Value
+}
+
+fn main() {
+    let doubled = new Samples.Interop.DoubleCounter(1);
+    System.Console.WriteLine(dispatch(doubled));
+    System.Console.WriteLine(Samples.Interop.CounterLabel.ReadBound(as_readable(doubled)));
+    let first = new Samples.Interop.Counter(0);
+    let second = new Samples.Interop.Counter(10);
+    System.Console.WriteLine(replace_receiver(first, second));
+    System.Console.WriteLine(second.Value);
+}

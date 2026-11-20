@@ -1,0 +1,13 @@
+fn key<K, V>(entry: System.Collections.Generic.KeyValuePair<K, V>) -> K {
+    entry.Key
+}
+
+fn main() {
+    let entry = System.Collections.Generic.KeyValuePair.Create("score", 30);
+    let entries = new System.Collections.Generic.List<
+        System.Collections.Generic.KeyValuePair<string, i32>
+    >();
+    entries.Add(entry);
+    System.Console.WriteLine(key(entries[0]));
+    System.Console.WriteLine(entries[0].Value);
+}

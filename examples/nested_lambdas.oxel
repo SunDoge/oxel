@@ -1,0 +1,13 @@
+fn main() {
+    let base = 10;
+    System.Array.ForEach([2, 4]) |row| {
+        System.Array.ForEach([10, 20]) |column| {
+            System.Array.ForEach([1]) |offset| {
+                System.Console.WriteLine(base + row + column + offset);
+            };
+        };
+    };
+    System.Array.ForEach([0]) |value| {
+        System.Console.WriteLine(value);
+    };
+}

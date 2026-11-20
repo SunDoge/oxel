@@ -1,0 +1,16 @@
+comptime fn factorial(n: i32) -> i32 {
+    let mut result = 1;
+    for i in 1..=n {
+        result *= i;
+    }
+    result
+}
+
+const SIX_FACTORIAL = factorial(6);
+
+fn main() {
+    System.Console.WriteLine(SIX_FACTORIAL);
+    for i in 1..4 {
+        System.Console.WriteLine($"Step {i}");
+    }
+}

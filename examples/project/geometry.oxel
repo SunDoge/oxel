@@ -1,0 +1,8 @@
+struct Dimensions {
+    width: i32,
+    height: i32,
+}
+
+fn area(box: Dimensions) -> i32 {
+    box.width * box.height
+}

@@ -1,0 +1,8 @@
+[package]
+name = "oxel-counter"
+sources = ["main.oxel"]
+framework = true
+
+[nuget]
+"Avalonia.Desktop" = "12.1.4"
+"Avalonia.Themes.Fluent" = "12.1.4"

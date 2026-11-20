@@ -1,0 +1,26 @@
+struct Container<T> {
+    value: T,
+}
+
+struct Pair<Left, Right> {
+    left: Container<Left>,
+    right: Container<Right>,
+}
+
+fn wrap<T>(value: T) -> Container<T> {
+    Container { value: value }
+}
+
+fn unwrap<T>(value: Container<T>) -> T {
+    value.value
+}
+
+fn main() {
+    let pair: Pair<i32, string> = Pair {
+        right: wrap("oxel"),
+        left: Container::<i32> { value: 30 },
+    };
+    let nested = wrap(pair.left);
+    System.Console.WriteLine(unwrap(nested).value);
+    System.Console.WriteLine(pair.right.value);
+}

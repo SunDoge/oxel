@@ -1,0 +1,11 @@
+fn main() {
+    let words = "oxel.CLR".Split('.');
+    System.Console.WriteLine(words.Length);
+
+    let delay = System.Threading.Tasks.Task.Delay(
+        System.TimeSpan.Zero,
+        System.TimeProvider.System,
+    );
+    delay.Wait();
+    System.Console.WriteLine(delay.IsCompleted);
+}

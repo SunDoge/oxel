@@ -1,0 +1,12 @@
+fn main() {
+    let offset = 10;
+    let values = new System.Collections.Generic.List<i32>();
+    values.Add(20);
+    values.ForEach() |value| {
+        System.Console.WriteLine(value + offset);
+    };
+
+    System.Array.ForEach(["oxel", "CLR"]) |value| {
+        System.Console.WriteLine(value);
+    };
+}

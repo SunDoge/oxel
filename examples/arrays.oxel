@@ -1,0 +1,13 @@
+fn sum(values: i32[]) -> i32 {
+    let mut total = 0;
+    for value in values {
+        total += value;
+    }
+    total
+}
+
+fn main() {
+    let values = [5, 10, 10];
+    values[0] += 5;
+    System.Console.WriteLine(sum(values));
+}

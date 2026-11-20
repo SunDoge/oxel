@@ -1,0 +1,4 @@
+fn main() {
+    let box = Dimensions { width: 5, height: 6 };
+    System.Console.WriteLine(area(box));
+}

@@ -1,0 +1,47 @@
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+enum Command {
+    Add(i32, i32),
+    Quit,
+    Reset,
+}
+
+fn total(command: Command) -> i32 {
+    let result: i32;
+    match command {
+        Add(a, b) => { result = a + b; },
+        Quit => { return 0; },
+        _ => { result = 0; },
+    }
+    result
+}
+
+fn report<T>(result: Result<T, string>) {
+    match result {
+        Result.Ok(value) => System.Console.WriteLine(value),
+        Result.Err(error) => System.Console.WriteLine(error),
+    }
+}
+
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+fn amount(result: Result<Maybe<i32>, string>) -> i32 {
+    match result {
+        Ok(Some(value)) => value,
+        Ok(Maybe.None) => 0,
+        Err(_) => 0,
+    }
+}
+
+fn main() {
+    let request: Result<Maybe<i32>, string> = Result.Ok(Maybe.Some(total(Command.Add(10, 20))));
+    let answer: Result<i32, string> = Result.Ok(amount(request));
+    report(answer);
+    report(Result.Err::<i32, string>("unavailable"));
+}

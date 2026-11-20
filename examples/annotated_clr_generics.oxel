@@ -1,0 +1,13 @@
+fn main() {
+    let names = ["Ada", "Grace"];
+    let name = System.Array.Find(names) |value| {
+        value == "Katherine"
+    };
+    System.Console.WriteLine(name ?? "missing");
+
+    let ids = [10, 20];
+    let id: i32 = System.Array.Find(ids) |value| {
+        value == 30
+    };
+    System.Console.WriteLine(id);
+}

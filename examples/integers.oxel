@@ -1,0 +1,13 @@
+fn add_byte(a: u8, b: u8) -> u8 {
+    a + b
+}
+
+fn main() {
+    let signed: i8 = 127;
+    let unsigned = add_byte(250, 10);
+    let short: System.Int16 = 32767;
+
+    System.Console.WriteLine(signed + 1);
+    System.Console.WriteLine(unsigned);
+    System.Console.WriteLine(short + 1);
+}

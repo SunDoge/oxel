@@ -1,0 +1,10 @@
+fn greet(name: System.String) -> string {
+    "你好，" + name + "！"
+}
+
+fn main() {
+    let name = "oxel 🌍";
+    let message = greet(name);
+    System.Console.WriteLine(message);
+    System.Console.WriteLine(message == "你好，oxel 🌍！");
+}

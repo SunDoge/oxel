@@ -1,0 +1,4 @@
+[package]
+name = "native-math"
+sources = ["main.oxel"]
+native_libraries = ["target/liboxel_math.so"]

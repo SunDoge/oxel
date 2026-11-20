@@ -1,0 +1,11 @@
+fn offset(enabled: bool) -> i32 {
+    10 + if enabled {
+        20
+    } else {
+        throw new System.InvalidOperationException("offset is disabled")
+    }
+}
+
+fn main(args: string[]) {
+    System.Console.WriteLine(offset(args.Length == 0));
+}

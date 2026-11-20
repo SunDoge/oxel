@@ -1,0 +1,31 @@
+fn choose(a: i32, b: i32) -> System.Int32 {
+    if a >= b { return a; }
+    b
+}
+
+fn my_long(x: System.Int64) -> i64 {
+    let mut y = x;
+    y = -(y + 1);
+    y
+}
+
+fn main() -> System.Void {
+    let mut value = 3 + 4 * 5;
+    {
+        let value = value - 3;
+        System.Console.WriteLine(value / 3 % 4);
+    }
+    value = choose(value, 31) - 1;
+    let order: System.Boolean = if value < 1 {
+        false
+    } else if value <= 30 {
+        !(value != 30)
+    } else {
+        false
+    };
+    System.Console.WriteLine(order);
+    System.Console.WriteLine(true == 2 > 0);
+    System.Console.WriteLine(value == 30);
+    System.Console.WriteLine(value);
+    System.Console.WriteLine(my_long(4000));
+}

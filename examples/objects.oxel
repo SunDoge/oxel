@@ -1,0 +1,30 @@
+struct Payload<T> {
+    value: T,
+}
+
+fn boxed<T>(value: T) -> object {
+    value
+}
+
+fn matches<T>(value: System.Object) -> bool {
+    value is T
+}
+
+fn unbox<T>(value: object) -> T {
+    value as T
+}
+
+fn main() {
+    let payload = boxed(Payload::<i32> { value: 30 });
+    if matches::<Payload<i32>>(payload) {
+        System.Console.WriteLine(unbox::<Payload<i32>>(payload).value);
+    }
+
+    let text: object = "oxel";
+    System.Console.WriteLine((text as string) + " on CLR");
+    System.Console.WriteLine(text is i32);
+
+    let number: object = 10;
+    System.Console.WriteLine(number as i32 < 20);
+    System.Console.WriteLine(number);
+}

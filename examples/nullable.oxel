@@ -1,0 +1,15 @@
+fn display(name: string?) -> string {
+    if null == name {
+        "Hello, guest"
+    } else {
+        "Hello, " + name
+    }
+}
+
+fn main() {
+    let missing: string? = null;
+    let present: string? = "oxel";
+    System.Console.WriteLine(display(missing));
+    System.Console.WriteLine(display(present));
+    System.Console.WriteLine(missing ?? present ?? "fallback");
+}

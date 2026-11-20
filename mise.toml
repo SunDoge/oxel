@@ -1,0 +1,4 @@
+[tools]
+cocogitto = "7"
+dotnet = "10"
+hk = { version = "2.12", workflow = "release.yml" }

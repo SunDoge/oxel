@@ -1,0 +1,31 @@
+enum Selection {
+    Pair(i32, i32),
+    Single(i32),
+    Empty,
+}
+
+fn status(code: i32) -> string {
+    match code {
+        200 | 201 | 204 => "success",
+        401 | 403 => "denied",
+        _ => "other",
+    }
+}
+
+fn selected(input: Selection) -> i32 {
+    match input {
+        Pair(value, _) | Single(value) if value > 0 => value,
+        Pair(_, value) | Single(value) => value,
+        Empty => 0,
+    }
+}
+
+fn main() {
+    System.Console.WriteLine(status(204));
+    System.Console.WriteLine(status(403));
+    System.Console.WriteLine(selected(Selection.Pair(-1, 42)));
+    System.Console.WriteLine(selected(Selection.Single(30)));
+    if let Some("start" | "stop") = Option.Some::<string>("stop") {
+        System.Console.WriteLine("command");
+    }
+}

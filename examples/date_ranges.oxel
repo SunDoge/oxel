@@ -1,0 +1,17 @@
+struct Window {
+    start: System.DateTime,
+    duration: System.TimeSpan,
+}
+
+fn end(window: Window) -> System.DateTime {
+    window.start.Add(window.duration)
+}
+
+fn main() {
+    let start = new System.DateTime(2026, 11, 20);
+    let duration = System.TimeSpan.FromDays(2.0);
+    let finish = end(Window { start: start, duration: duration });
+    System.Console.WriteLine(finish.Day);
+    let ordered: System.IComparable = finish;
+    System.Console.WriteLine(ordered.CompareTo(start) > 0);
+}

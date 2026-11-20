@@ -1,0 +1,41 @@
+struct State {
+    counter: Samples.Interop.Counter,
+}
+
+fn read(state: State) -> i32 {
+    state.counter.Read()
+}
+
+fn create(start: i32) -> Samples.Interop.Counter {
+    new Samples.Interop.Counter(start)
+}
+
+fn choose(use_counter: bool, counter: Samples.Interop.Counter) -> Samples.Interop.ICounter {
+    if use_counter { counter } else { new Samples.Interop.FixedCounter() }
+}
+
+fn main() {
+    let counter: Samples.Interop.Counter = create(20);
+    let state = State { counter: counter };
+    counter.Value = 30;
+    System.Console.WriteLine(read(state));
+    System.Console.WriteLine(counter.Copy().Read());
+    System.Console.WriteLine(counter.Add(3000000000));
+
+    let doubled = new Samples.Interop.DoubleCounter(10);
+    doubled.Add(5);
+    let base: Samples.Interop.Counter = doubled;
+    System.Console.WriteLine(base.Value);
+
+    let view = choose(true, counter);
+    System.Console.WriteLine(view.Value);
+    System.Console.WriteLine(choose(false, counter).Read());
+    System.Console.WriteLine(Samples.Interop.CounterLabel.Of(doubled));
+    System.Console.WriteLine(Samples.Interop.CounterLabel.Of(view));
+    System.Console.WriteLine(new Samples.Interop.Counter(30).Read());
+
+    Samples.Interop.CounterLabel.Reads = 10;
+    Samples.Interop.CounterLabel.Tracked.Value = Samples.Interop.CounterLabel.Reads;
+    System.Console.WriteLine(Samples.Interop.CounterLabel.Tracked.Read());
+    System.Console.WriteLine(Samples.Interop.CounterLabel.Reads);
+}

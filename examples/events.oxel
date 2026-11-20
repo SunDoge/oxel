@@ -1,0 +1,16 @@
+fn main() {
+    let values = new System.Collections.ObjectModel.ObservableCollection<i32>();
+    let handler: System.Collections.Specialized.NotifyCollectionChangedEventHandler = |_, _| {
+        System.Console.WriteLine(values.Count);
+    };
+
+    values.CollectionChanged += handler;
+    values.Add(10);
+    values.CollectionChanged -= handler;
+    values.Add(20);
+
+    values.CollectionChanged += |_, change| {
+        System.Console.WriteLine(change.NewStartingIndex);
+    };
+    values.Add(30);
+}

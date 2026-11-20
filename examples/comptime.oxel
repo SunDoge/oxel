@@ -1,0 +1,16 @@
+const VALUE = factorial(10);
+const BASE = 1;
+
+comptime fn factorial(n: i32) -> i32 {
+    let mut result = BASE;
+    let mut factor = 2;
+    while factor <= n {
+        result = result * factor;
+        factor = factor + 1;
+    }
+    result
+}
+
+fn main() {
+    System.Console.WriteLine(VALUE);
+}

@@ -1,0 +1,18 @@
+const SCALE: f32 = 1.25e1 / 2.0;
+
+struct Vector {
+    x: f32,
+    y: f32,
+}
+
+fn length_squared(vector: Vector) -> f32 {
+    vector.x * vector.x + vector.y * vector.y
+}
+
+fn main() {
+    let squared = length_squared(Vector { x: 3.0, y: 4.0 });
+    let ratio: System.Double = 0.125 * 8.0;
+    System.Console.WriteLine(squared);
+    System.Console.WriteLine(SCALE * 4.0);
+    System.Console.WriteLine(ratio == 1.0);
+}
