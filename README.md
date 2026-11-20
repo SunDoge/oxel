@@ -509,6 +509,8 @@ For projects without NuGet dependencies, `check` and LSP can load framework refe
 
 With framework references enabled, aliases can call the public CLR instance methods whose signatures oxel supports. For example, `" oxel ".Trim()` returns `"oxel"` and `(30).ToString("D3")` returns `"030"`. Numeric, Boolean and character methods receive a managed address. String and object calls use reference dispatch. Nullable receivers must be narrowed before a call. [CLR instance calls](https://learn.microsoft.com/dotnet/api/system.reflection.emit.opcodes.call)
 
+Aliases also use the interfaces declared by their CLR types. An `i32` satisfies `T: System.IFormattable`, and assigning it to an interface boxes it. Oxel can infer `T` from the implemented `System.IComparable<T>` interface when a call receives an `i32` or `string`. [Runnable example](examples/alias_interfaces.oxel)
+
 ### Local assemblies
 
 Pass an implementation DLL with `--reference` to check, compile or run code that uses its public methods and reference types. Repeat the flag for each DLL, including any additional DLLs the application needs at runtime.

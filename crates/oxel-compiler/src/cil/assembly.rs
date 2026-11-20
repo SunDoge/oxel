@@ -327,7 +327,7 @@ impl<'refs> Tables<'refs> {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
         let mut guids = GuidHeap::new();
-        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 48 module id");
+        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 49 module id");
         hash.update(name.as_bytes());
         hash.update(b"\0");
         if namespace.is_some() {

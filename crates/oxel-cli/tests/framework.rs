@@ -21,6 +21,39 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn builtin_aliases_participate_in_clr_interface_conversions() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let source = project.join("main.oxel");
+    fs::write(
+        &source,
+        include_str!("../../../examples/alias_interfaces.oxel"),
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "030\n30\n1\n0\n",
+    );
+
+    for (code, diagnostic) in [
+        (
+            "fn use<T: System.IDisposable>(value: T) {} fn main() { use(30); }",
+            "E0212",
+        ),
+        (
+            "fn main() { let value: System.IComparable<object> = 30; }",
+            "E0301",
+        ),
+    ] {
+        fs::write(&source, code).unwrap();
+        let failure = oxel(project, &["check", "--framework", "main.oxel"]);
+        assert!(!failure.status.success());
+        let error = String::from_utf8(failure.stderr).unwrap();
+        assert!(error.contains(diagnostic), "{error}");
+    }
+}
+
+#[test]
 fn lambdas_preserve_generic_types_constraints_and_captures() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();

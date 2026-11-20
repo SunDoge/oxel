@@ -542,14 +542,11 @@ impl References {
             if let Some(owner) = implementation
                 .class
                 .checked_sub(1)
-                .and_then(|row| {
-                    signature_types
-                        .get(row as usize)
-                        .copied()
-                        .flatten()
-                        .map(|ty| ty.id)
+                .and_then(|row| type_ids.get(row as usize).copied().flatten())
+                .filter(|&owner| {
+                    let ty = &self.types[owner];
+                    ty.is_reference || ty.value_struct || ty.builtin.is_some()
                 })
-                .filter(|&owner| self.types[owner].is_reference || self.types[owner].value_struct)
                 && let Some(mut signature) =
                     parent_type(implementation.interface, self.types[owner].arity)
                 && nullable.parent(&mut signature, implementation.class, Some(index as u32 + 1))

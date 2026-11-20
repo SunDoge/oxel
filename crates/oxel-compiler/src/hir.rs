@@ -4966,7 +4966,7 @@ impl<'a, 'src> Checker<'a, 'src> {
         } else if value.ty == Type::Object
             || (matches!(value.ty, Type::NullableObject | Type::Null)
                 && self.types.nullable_underlying(ty).is_some())
-            || (ty.imported_value() && self.types.upcasts(ty, value.ty))
+            || ((ty.scalar() || ty.imported_value()) && self.types.upcasts(ty, value.ty))
             || (ty.reference()
                 && value.ty.reference()
                 && (!value.ty.is_nullable() || ty.is_nullable())

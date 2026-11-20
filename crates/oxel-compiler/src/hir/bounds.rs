@@ -544,7 +544,7 @@ impl Checker<'_, '_> {
             && value.ty != expected
             && (expected.external_reference() || matches!(expected, Type::MethodParameter(_)));
         let reference_box = (expected.non_nullable() == Type::Object
-            || value.ty.imported_value() && expected.external_reference())
+            || (value.ty.scalar() || value.ty.imported_value()) && expected.external_reference())
             && !value.ty.reference()
             && !matches!(value.ty, Type::Void | Type::Never);
         if generic_upcast || reference_box {

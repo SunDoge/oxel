@@ -81,7 +81,7 @@ impl Inference {
             return observe_arguments(&direct);
         }
         if matches!(pattern.kind, super::InstanceKind::External(_))
-            && (actual.external_reference() || actual.imported_value())
+            && types.ancestor_id(actual.non_nullable()).is_some()
         {
             for ancestor in types.ancestors(actual.non_nullable(), true) {
                 if let Some(instance) = ancestor.instance_id().map(|id| types.instance(id))

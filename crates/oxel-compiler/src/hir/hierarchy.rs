@@ -81,7 +81,9 @@ impl Structs<'_, '_> {
                 InstanceKind::External(definition) => Some(definition),
                 _ => unreachable!("constructed CLR struct"),
             },
-            _ => self.imported_id(ty),
+            _ => self
+                .imported_id(ty)
+                .or_else(|| self.references.builtin_receiver(ty)),
         }
     }
 

@@ -1,0 +1,17 @@
+fn padded<T: System.IFormattable>(value: T) -> string {
+    value.ToString("D3", System.Globalization.CultureInfo.InvariantCulture)
+}
+
+fn comparable<T>(value: System.IComparable<T>) -> System.IComparable<T> {
+    value
+}
+
+fn main() {
+    System.Console.WriteLine(padded(30));
+    let boxed: System.IFormattable = 30;
+    System.Console.WriteLine(boxed as i32);
+    let number = comparable(30);
+    System.Console.WriteLine(number.CompareTo(20));
+    let text = comparable("oxel");
+    System.Console.WriteLine(text.CompareTo("oxel"));
+}
