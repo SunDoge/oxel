@@ -1,0 +1,117 @@
+use Avalonia::Controls::{Button, Control, StackPanel, TextBlock};
+use Avalonia::Layout::{HorizontalAlignment, Orientation};
+use System::{Action, Object};
+use System::Collections::Generic::List;
+use System::Runtime::CompilerServices::StrongBox;
+
+struct Frame {
+    panel: StackPanel,
+    children: List<Control>,
+    redraw: Action,
+}
+
+fn mount(panel: StackPanel, view: Action<Frame>) {
+    let mut redraw: Action? = null;
+    redraw = || {
+        if let Some(render) = redraw {
+            draw(panel, render, view);
+        }
+    };
+    if let Some(render) = redraw {
+        render();
+    }
+}
+
+fn draw(panel: StackPanel, redraw: Action, view: Action<Frame>) {
+    let frame = Frame { panel: panel, children: new List<Control>(), redraw: redraw };
+    view(frame);
+    let live = panel.Children;
+
+    // Remove unused controls first so an insertion or deletion doesn't move unchanged siblings.
+    let mut index = live.Count;
+    while index > 0 {
+        index -= 1;
+        if !frame.children.Contains(live[index]) {
+            live.RemoveAt(index);
+        }
+    }
+
+    index = 0;
+    while index < frame.children.Count {
+        let child = frame.children[index];
+        if index >= live.Count || !Object.ReferenceEquals(live[index], child) {
+            let previous = live.IndexOf(child);
+            if previous < 0 {
+                live.Insert(index, child);
+            } else {
+                live.Move(previous, index);
+            }
+        }
+        index += 1;
+    }
+}
+
+fn existing(frame: Frame, key: string) -> Control? {
+    for child in frame.children {
+        assert(!System.String.Equals(child.Name, key));
+    }
+    for child in frame.panel.Children {
+        if System.String.Equals(child.Name, key) {
+            return child;
+        }
+    }
+    null
+}
+
+fn text(frame: Frame, key: string, value: string) {
+    let label = existing(frame, key) as? TextBlock ?? new TextBlock();
+    if !System.String.Equals(label.Name, key) {
+        label.Name = key;
+        label.FontSize = 28.0;
+    }
+    if !System.String.Equals(label.Text, value) {
+        label.Text = value;
+    }
+    frame.children.Add(label);
+}
+
+fn row(frame: Frame, key: string, view: Action<Frame>) {
+    let panel = existing(frame, key) as? StackPanel ?? new StackPanel();
+    if !System.String.Equals(panel.Name, key) {
+        panel.Name = key;
+        panel.Orientation = Orientation.Horizontal;
+        panel.Spacing = 8.0;
+    }
+    draw(panel, frame.redraw, view);
+    frame.children.Add(panel);
+}
+
+fn button(frame: Frame, key: string, caption: string, enabled: bool, click: Action) {
+    let control = existing(frame, key) as? Button ?? new Button();
+    if !System.String.Equals(control.Name, key) {
+        control.Name = key;
+        control.MinHeight = 44.0;
+        control.HorizontalContentAlignment = HorizontalAlignment.Center;
+        // Keep one Avalonia subscription while each view supplies a fresh action.
+        let handler = new StrongBox<Action>(click);
+        let redraw = frame.redraw;
+        control.Tag = handler;
+        control.Click += |_, _| {
+            if control.IsEnabled {
+                if let Some(action) = handler.Value {
+                    action();
+                    redraw();
+                }
+            }
+        };
+    } else if let Some(handler) = control.Tag as? StrongBox<Action> {
+        handler.Value = click;
+    }
+    if !Object.Equals(control.Content, caption) {
+        control.Content = caption;
+    }
+    if control.IsEnabled != enabled {
+        control.IsEnabled = enabled;
+    }
+    frame.children.Add(control);
+}

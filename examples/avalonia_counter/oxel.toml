@@ -1,6 +1,7 @@
 [package]
 name = "oxel-counter"
-sources = ["main.oxel"]
+sources = ["main.oxel", "immediate.oxel"]
+test_sources = ["tests.oxel"]
 framework = true
 
 [nuget]

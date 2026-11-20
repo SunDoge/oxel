@@ -1,0 +1,77 @@
+use Avalonia::Controls::{Button, StackPanel, TextBlock};
+use Avalonia::Interactivity::RoutedEventArgs;
+use System::{InvalidOperationException, Object, String};
+
+fn click(button: Button) {
+    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+}
+
+#[test]
+fn counter_actions_patch_existing_controls() {
+    let panel = new StackPanel();
+    mount_counter(panel);
+    let label = (panel.Children[0] as? TextBlock) ?? throw new InvalidOperationException();
+    let actions = (panel.Children[1] as? StackPanel) ?? throw new InvalidOperationException();
+    let decrement = (actions.Children[0] as? Button) ?? throw new InvalidOperationException();
+    let reset = (actions.Children[1] as? Button) ?? throw new InvalidOperationException();
+    let increment = (actions.Children[2] as? Button) ?? throw new InvalidOperationException();
+    let mut collection_changes = 0;
+    panel.Children.CollectionChanged += |_, _| { collection_changes += 1; };
+    actions.Children.CollectionChanged += |_, _| { collection_changes += 1; };
+
+    assert(String.Equals(label.Text, "Count: 0"));
+    assert(!reset.IsEnabled);
+    click(increment);
+    click(increment);
+    assert(String.Equals(label.Text, "Count: 2"));
+    click(decrement);
+    assert(String.Equals(label.Text, "Count: 1"));
+    assert(reset.IsEnabled);
+    click(reset);
+    assert(String.Equals(label.Text, "Count: 0"));
+    assert(!reset.IsEnabled);
+    assert(collection_changes == 0);
+    assert(Object.ReferenceEquals(panel.Children[0], label));
+    assert(Object.ReferenceEquals(actions.Children[2], increment));
+}
+
+#[test]
+fn keyed_diff_moves_inserts_removes_and_refreshes_callbacks() {
+    let panel = new StackPanel();
+    let mut step = 0;
+    mount(panel) |ui| {
+        let next = step + 1;
+        if step < 2 {
+            text(ui, "first", "First");
+        }
+        if step != 0 {
+            text(ui, "new_label", "New");
+        }
+        button(ui, "advance", "Advance", true) { step = next; };
+        if step == 0 {
+            text(ui, "last", "Last");
+        } else if step == 2 {
+            text(ui, "first", "First");
+        }
+    };
+
+    let first = panel.Children[0];
+    let advance = (panel.Children[1] as? Button) ?? throw new InvalidOperationException();
+    click(advance);
+    assert(panel.Children.Count == 3);
+    assert(Object.ReferenceEquals(panel.Children[0], first));
+    let inserted = panel.Children[1];
+    assert(String.Equals(inserted.Name, "new_label"));
+    assert(Object.ReferenceEquals(panel.Children[2], advance));
+
+    click(advance);
+    assert(panel.Children.Count == 3);
+    assert(Object.ReferenceEquals(panel.Children[0], inserted));
+    assert(Object.ReferenceEquals(panel.Children[1], advance));
+    assert(Object.ReferenceEquals(panel.Children[2], first));
+
+    click(advance);
+    assert(panel.Children.Count == 2);
+    assert(Object.ReferenceEquals(panel.Children[0], inserted));
+    assert(Object.ReferenceEquals(panel.Children[1], advance));
+}

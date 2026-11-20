@@ -1,26 +1,27 @@
-fn counter_window() -> Avalonia.Controls.Window {
+fn mount_counter(panel: Avalonia.Controls.StackPanel) {
     let mut count = 0;
-    let label = new Avalonia.Controls.TextBlock();
-    label.Text = "Count: 0";
-    label.FontSize = 24.0;
-
-    let increment = new Avalonia.Controls.Button();
-    increment.Content = "Increment";
-    increment.Click += |_, _| {
-        count += 1;
-        label.Text = $"Count: {count}";
+    mount(panel) |ui| {
+        text(ui, "count", $"Count: {count}");
+        row(ui, "actions") |actions| {
+            button(actions, "decrement", "Decrement", true) { count -= 1; };
+            button(actions, "reset", "Reset", count != 0) { count = 0; };
+            button(actions, "increment", "Increment", true) { count += 1; };
+        };
     };
+}
 
+fn counter_window() -> Avalonia.Controls.Window {
     let panel = new Avalonia.Controls.StackPanel();
     panel.Margin = new Avalonia.Thickness(24.0);
-    panel.Spacing = 12.0;
-    panel.Children.Add(label);
-    panel.Children.Add(increment);
+    panel.Spacing = 16.0;
+    mount_counter(panel);
 
     let window = new Avalonia.Controls.Window();
     window.Title = "oxel Counter";
-    window.Width = 320.0;
+    window.Width = 360.0;
     window.Height = 180.0;
+    window.MinWidth = 340.0;
+    window.MinHeight = 160.0;
     window.Content = panel;
     window
 }

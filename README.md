@@ -52,12 +52,15 @@ The endpoints return `ok` and `30`. The server returns HTTP 400 for missing or i
 
 ### Avalonia desktop example
 
-The [Avalonia counter](examples/avalonia_counter/main.oxel) opens a desktop window with an **Increment** button. It builds the layout in oxel and updates the text through a CLR click event. Run it in a graphical desktop session.
+The [Avalonia counter](examples/avalonia_counter/main.oxel) uses an immediate-style view with trailing lambdas for the layout and click actions. A click updates the counter state and reruns the view. The [reconciler](examples/avalonia_counter/immediate.oxel) reuses Avalonia controls by key within each parent, patches changed properties, and inserts, moves, or removes children when the structure changes. Avalonia provides input handling and draws the controls.
 
 ```sh
 oxel run --manifest-path examples/avalonia_counter/oxel.toml
 oxel publish --manifest-path examples/avalonia_counter/oxel.toml
+oxel test --manifest-path examples/avalonia_counter/oxel.toml
 ```
+
+Run the app in a graphical desktop session. The tests exercise the keyed diff and dispatch Avalonia click events without opening a window.
 
 The manifest uses the Avalonia Desktop and Fluent Theme packages. To run the Native AOT build, launch the executable printed by `publish` from its bundle. Keep the bundle together when moving it to a compatible machine. [Code-only Avalonia UI](https://docs.avaloniaui.net/docs/fundamentals/coded-ui)
 
