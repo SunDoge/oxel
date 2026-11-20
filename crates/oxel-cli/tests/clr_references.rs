@@ -2183,6 +2183,7 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public int ReadLocation(ref readonly int value) => value + 3;
         }
         public delegate int ReadDelegate(in int value);
+        public delegate int Transform(int value);
         public struct Cursor {
             private int value;
             public Cursor(int value) => this.value = value;
@@ -2198,6 +2199,9 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public static int Pick(int value) => value;
             public static int Pick(in int value) => value + 1;
             public static int Length(in string text) => text.Length;
+            public static int MaybeLength(in string? text) => text?.Length ?? 0;
+            public static T Echo<T>(in T value) => value;
+            public static int Apply(int value, Transform transform) => transform(value);
             public static int Location(ref readonly int value) => value + 2;
             public static ReadDelegate GetDelegate() => ReadOnly;
             public static void InputFlag([System.Runtime.InteropServices.In] ref int value) => value++;
@@ -2219,6 +2223,18 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
     let output = cli(
         "run",
         r#"
+        fn forward(number: i32, word: string?) -> i32 {
+            if word != null {
+                ByRef.Api.ReadOnly(in number) + ByRef.Api.MaybeLength(in word)
+            } else {
+                ByRef.Api.MaybeLength(in word)
+            }
+        }
+
+        fn echo<T>(value: T) -> T {
+            ByRef.Api.Echo(in value)
+        }
+
         fn main() {
             let code: i32;
             let reader = new ByRef.Reader(out code);
@@ -2257,6 +2273,9 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             System.Console.WriteLine(interface_reader.ReadLocation(in number));
             let callback = ByRef.Api.GetDelegate();
             System.Console.WriteLine(callback(in number));
+            System.Console.WriteLine(forward(number, word));
+            System.Console.WriteLine(echo(number));
+            System.Console.WriteLine(ByRef.Api.Apply(number) |value| { ByRef.Api.ReadOnly(in value) });
         }
         "#,
     );
@@ -2264,7 +2283,7 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         successful(output).lines().collect::<Vec<_>>(),
         [
             "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "5", "32", "64",
-            "66", "33", "31"
+            "66", "33", "31", "36", "30", "31"
         ]
     );
 
@@ -2295,6 +2314,20 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         assert!(!result.status.success(), "{body}");
         let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(stderr.contains(code), "{body}: {stderr}");
+    }
+
+    for (call, code) in [
+        ("ByRef.Api.Set(out number)", "E0213"),
+        ("ByRef.Api.Clear(ref word)", "E0213"),
+        ("if word != null { ByRef.Api.Length(in word); }", "E0205"),
+    ] {
+        let result = cli(
+            "check",
+            &format!("fn forward(number: i32, word: string?) {{ {call}; }} fn main() {{}}"),
+        );
+        assert!(!result.status.success(), "{call}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(code), "{call}: {stderr}");
     }
 }
 

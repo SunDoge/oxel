@@ -2618,12 +2618,18 @@ impl<'a, 'src> Checker<'a, 'src> {
     }
 
     fn binding(&mut self, name: &str, span: Span) -> Option<Binding> {
+        self.binding_with_storage(name, span)
+            .map(|(binding, _)| binding)
+    }
+
+    fn binding_with_storage(&mut self, name: &str, span: Span) -> Option<(Binding, Type)> {
         let mut binding = self
             .scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
             .or_else(|| self.capture.as_mut()?.binding(name, span))?;
+        let storage = binding.ty;
         if self.nonnull.contains(&binding.value) {
             binding.ty = binding.ty.non_nullable();
         }
@@ -2643,7 +2649,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 describe_scoped(types, type_parameters, binding.ty)
             )
         });
-        Some(binding)
+        Some((binding, storage))
     }
 
     fn statement(
@@ -5775,7 +5781,7 @@ impl<'a, 'src> Checker<'a, 'src> {
     }
 
     fn reference_argument(&mut self, mode: ArgumentMode, name: &str, span: Span) -> Checked<Expr> {
-        let Some(binding) = self.binding(name, span) else {
+        let Some((binding, storage)) = self.binding_with_storage(name, span) else {
             return Err(Diagnostic::new(
                 "E0202",
                 span,
@@ -5785,11 +5791,17 @@ impl<'a, 'src> Checker<'a, 'src> {
         let ty = match binding.value {
             Value::Local(index) => self.locals[usize::from(index)],
             Value::CapturedCell(_, ty) => ty,
+            Value::Parameter(_) if mode == ArgumentMode::In => storage,
             _ => {
+                let target = if mode == ArgumentMode::In {
+                    "a local binding or parameter"
+                } else {
+                    "a local binding"
+                };
                 return Err(Diagnostic::new(
                     "E0213",
                     span,
-                    format!("'{}' requires a local binding", mode.prefix().trim_end()),
+                    format!("'{}' requires {target}", mode.prefix().trim_end()),
                 ));
             }
         };
