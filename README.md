@@ -64,6 +64,23 @@ Run the app in a graphical desktop session. The tests exercise the keyed diff an
 
 The manifest uses the Avalonia Desktop and Fluent Theme packages. To run the Native AOT build, launch the executable printed by `publish` from its bundle. Keep the bundle together when moving it to a compatible machine. [Code-only Avalonia UI](https://docs.avaloniaui.net/docs/fundamentals/coded-ui)
 
+### Plico desktop experiment
+
+The [Plico counter](examples/plico_counter/main.oxel) uses the same immediate-style view and trailing lambdas with a Rust window host. Oxel holds the counter state and receives a batch of activated button keys. It submits a command array and a UTF-8 buffer together. The Rust host copies the accepted batch and declares its keyed nodes through Plico, which handles reconciliation, layout, input, and drawing. Plico's desktop host provides the winit event loop and wgpu renderer.
+
+Build the pinned Rust host and generate its bindings before running the example. The manifest packages the Linux shared library. The Rust host is an independent Cargo workspace under the example.
+
+```sh
+cargo build --locked --manifest-path examples/plico_counter/native/Cargo.toml
+mkdir -p examples/plico_counter/target
+oxel bindgen examples/plico_counter/native/src/lib.rs --library oxel_plico_counter \
+  -o examples/plico_counter/target/plico.ffi.oxel
+oxel run --manifest-path examples/plico_counter/oxel.toml
+oxel publish --manifest-path examples/plico_counter/oxel.toml
+```
+
+Run the window in a Linux graphical session with working wgpu drivers and the system libraries needed by Plico for text. Use Tab to focus a button and Space to activate it. The host keeps the callback alive until the window closes. It invokes Oxel for the initial view and after activations while Plico can repaint the current batch independently. The experiment packages a desktop executable. Mobile runtime and application packaging are separate integration work.
+
 ## Multi-file modules
 
 ```sh

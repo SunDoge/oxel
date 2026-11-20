@@ -1,0 +1,5 @@
+[package]
+name = "oxel-plico-counter"
+framework = true
+sources = ["main.oxel", "target/plico.ffi.oxel"]
+native_libraries = ["native/target/debug/liboxel_plico_counter.so"]
