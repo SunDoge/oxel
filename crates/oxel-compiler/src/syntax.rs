@@ -720,8 +720,11 @@ impl ParameterPassing {
 
     pub fn prefix(self) -> &'static str {
         match self {
+            Self::Value => "",
+            Self::In => "in ",
+            Self::Ref => "ref ",
+            Self::Out => "out ",
             Self::Utf8 => "utf8 ",
-            _ => self.mode().prefix(),
         }
     }
 }

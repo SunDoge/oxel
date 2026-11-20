@@ -2255,7 +2255,7 @@ pub fn clr_function_signatures(name: &str, references: &References) -> Vec<Calla
                     .map(|(index, ty)| {
                         format!(
                             "{}{}",
-                            method.parameter_mode(index).prefix(),
+                            method.parameter_mode(index).call_prefix(),
                             types.describe(ty)
                         )
                     }),
@@ -2535,7 +2535,7 @@ impl<'a, 'src> Checker<'a, 'src> {
             parameters.into_iter().map(|(mode, ty)| {
                 format!(
                     "{}{}",
-                    mode.prefix(),
+                    mode.call_prefix(),
                     describe_scoped(types, type_parameters, ty)
                 )
             }),
@@ -5588,7 +5588,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 .map(|(arg, source)| {
                     format!(
                         "{}{}",
-                        source.argument_mode().prefix(),
+                        source.argument_mode().call_prefix(),
                         self.types.describe(arg.ty)
                     )
                 })
@@ -5801,7 +5801,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 return Err(Diagnostic::new(
                     "E0213",
                     span,
-                    format!("'{}' requires {target}", mode.prefix().trim_end()),
+                    format!("'{}' requires {target}", mode.call_prefix().trim_end()),
                 ));
             }
         };
@@ -5826,7 +5826,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 span,
                 format!(
                     "'{}' requires a value type or nullable reference local",
-                    mode.prefix().trim_end()
+                    mode.call_prefix().trim_end()
                 ),
             ));
         }

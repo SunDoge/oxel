@@ -2220,6 +2220,12 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             .output()
             .unwrap()
     };
+    let mut symbols = oxel::References::default();
+    symbols.add(&fs::read(&reference).unwrap()).unwrap();
+    assert_eq!(
+        oxel::clr_function_signatures("ByRef.Api.ReadOnly", &symbols)[0].label,
+        "ByRef.Api.ReadOnly(&System.Int32) -> System.Int32"
+    );
     let output = cli(
         "run",
         r#"

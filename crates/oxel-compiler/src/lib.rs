@@ -30,11 +30,11 @@ enum ArgumentMode {
 }
 
 impl ArgumentMode {
-    fn prefix(self) -> &'static str {
+    fn call_prefix(self) -> &'static str {
         match self {
             Self::Value => "",
-            Self::In => "in ",
-            Self::Ref => "ref ",
+            Self::In => "&",
+            Self::Ref => "&mut ",
             Self::Out => "out ",
         }
     }

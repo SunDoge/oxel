@@ -335,7 +335,11 @@ fn signature_help_uses_resolved_and_incomplete_clr_static_calls() {
     let temp = tempfile::tempdir().unwrap();
     let reference = temp.path().join("Bridge.dll");
     let bytes = oxel::compile(
-        "fn main() {} fn pair(first: i32, second: i32) -> i32 { first + second }",
+        r#"
+        fn main() {}
+        fn pair(first: i32, second: i32) -> i32 { first + second }
+        extern "C" fn exchange(ref current: i32, out previous: i32) = "sample";
+        "#,
         "Bridge",
     )
     .unwrap();
@@ -367,6 +371,23 @@ fn signature_help_uses_resolved_and_incomplete_clr_static_calls() {
     let result = client.signature_help(uri, text, "System.Console.WriteLine(");
     assert_eq!(result["activeParameter"], 0);
     assert_eq!(result["signatures"].as_array().unwrap().len(), 2);
+
+    let text = "fn main() { let mut n = 1; let prev: i32; Program.exchange(&mut n, out prev); }";
+    client.change(uri, 4, json!([{"text": text}]));
+    assert_eq!(client.diagnostics()["diagnostics"], json!([]));
+    let result = client.signature_help(uri, text, "Program.exchange(&mut n, ");
+    assert_eq!(result["activeParameter"], 1);
+    assert_eq!(
+        result["signatures"][0],
+        json!({
+            "label": "Program.exchange(&mut System.Int32, out System.Int32) -> System.Void",
+            "parameters": [{"label": [17, 34]}, {"label": [36, 52]}]
+        })
+    );
+    let incomplete = "fn main() { let mut n = 1; Program.exchange(&mut n, ";
+    client.change(uri, 5, json!([{"text": incomplete}]));
+    client.diagnostics();
+    assert_eq!(client.signature_help(uri, incomplete, incomplete), result);
     client.finish();
 }
 
