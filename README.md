@@ -558,9 +558,18 @@ Calls to CLR methods and constructors can omit trailing positional parameters ma
 
 For CLR methods and constructors declared with `params T[]`, pass a compatible array directly or pass zero or more trailing values. Oxel evaluates the trailing expressions from left to right and builds a CLR vector for the call. Generic methods can infer the element type from the supplied values. When there are no values and no other arguments to infer from, specify the type argument explicitly. A compatible explicit array keeps its identity, and a fixed-arity overload wins when its argument types otherwise tie with an expanded overload. [Runnable example](examples/parameter_arrays.oxel) · [CLR parameter arrays](https://learn.microsoft.com/en-us/dotnet/api/system.paramarrayattribute)
 
-Pass a mutable, initialized local with `&mut value` to a CLR `ref` parameter. When passing a CLR object binding with `&mut`, both the local and the CLR `ref` parameter must be nullable. Use `out value` to pass storage that the call initializes, including a delayed `let`. The local becomes definitely assigned on normal return, even when the method returns `false`. To write it again, declare it with `let mut`. [TryParse and Interlocked example](examples/byref_arguments.oxel) · [C# reference parameters](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters)
+The call-site spelling determines the passing mode. Oxel only considers CLR overloads whose parameter modes match the call before it compares parameter types and conversions. For example, `f(x)` requires a by-value overload, so calling a method that only has an `in` parameter requires `f(&x)`.
 
-Write `&value` to pass an initialized local, a function parameter, or a lambda parameter to a C# `in` or `ref readonly` parameter. An immutable `let` local works because the parameter is read-only. Managed-reference arguments work with imported methods, constructors, and delegate calls, including calls through interfaces and virtual dispatch. The storage type must match the CLR parameter type, even if a null check has narrowed the type for ordinary reads. `&value` and `&mut value` are call-site forms that follow CLR aliasing rules. The spellings `in value` and `ref value` also work. [C# parameter modifiers](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters)
+| Call | CLR parameter | Requirement |
+| --- | --- | --- |
+| `f(x)` | By value | An expression of a compatible type |
+| `f(&x)` | `in` or `ref readonly` | An initialized local, function parameter, or lambda parameter |
+| `f(&mut x)` | `ref` | An initialized, mutable local |
+| `f(out x)` | `out` | A mutable local or a delayed `let` that the call initializes |
+
+When passing a CLR object binding with `&mut`, both the local and the CLR `ref` parameter must be nullable. An `out` local becomes definitely assigned on normal return, even when the method returns `false`. To write it again, declare it with `let mut`. [TryParse and Interlocked example](examples/byref_arguments.oxel) · [C# reference parameters](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters)
+
+Managed-reference arguments work with imported methods, constructors, and delegate calls, including calls through interfaces and virtual dispatch. The storage type must match the CLR parameter type, even if a null check has narrowed the type for ordinary reads. `&value` and `&mut value` are call-site forms that follow CLR aliasing rules. The spellings `in value` and `ref value` also work.
 
 ### Trailing lambdas
 

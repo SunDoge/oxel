@@ -2198,6 +2198,11 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public static int ReadOnly(in int input) => input + 1;
             public static int Pick(int value) => value;
             public static int Pick(in int value) => value + 1;
+            public static int Route(int value) => 101;
+            public static int Route(ref int value) { value++; return 102; }
+            public static int Route(in long value) => 103;
+            public static int Route(bool value) => 104;
+            public static int Route(out bool value) { value = true; return 105; }
             public static int ReadEither(in int value) => value;
             public static bool ReadEither(in bool value) => value;
             public static void ByValue(int value) { }
@@ -2303,6 +2308,15 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             System.Console.WriteLine(ByRef.Api.ReadOnly(in number));
             System.Console.WriteLine(ByRef.Api.Pick(count & 15));
             System.Console.WriteLine(ByRef.Api.Pick(&count));
+            let mut route_value = 1;
+            let readonly_value: i64 = 1;
+            let route_output: bool;
+            System.Console.WriteLine(ByRef.Api.Route(route_value));
+            System.Console.WriteLine(ByRef.Api.Route(&mut route_value));
+            System.Console.WriteLine(route_value);
+            System.Console.WriteLine(ByRef.Api.Route(&readonly_value));
+            System.Console.WriteLine(ByRef.Api.Route(out route_output));
+            System.Console.WriteLine(ByRef.Api.Route(route_output));
             let word = "hello";
             System.Console.WriteLine(ByRef.Api.Length(in word));
             System.Console.WriteLine(ByRef.Api.Location(in number));
@@ -2324,8 +2338,8 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
     assert_eq!(
         successful(output).lines().collect::<Vec<_>>(),
         [
-            "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "5", "32", "64",
-            "66", "33", "31", "36", "30", "31"
+            "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "101", "102", "2",
+            "103", "105", "104", "5", "32", "64", "66", "33", "31", "36", "30", "31"
         ]
     );
 
@@ -2347,6 +2361,8 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         ("let x: string? = null; ByRef.Api.Clear(&mut x);", "E0204"),
         ("let mut x = 1; ByRef.Api.ReadOnly(&mut x);", "E0213"),
         ("let x = 1; ByRef.Api.Set(&mut x);", "E0213"),
+        ("let x = 1; ByRef.Api.Route(&x);", "E0205"),
+        ("let x: i32; ByRef.Api.Route(out x);", "E0205"),
         ("let x: string? = null; ByRef.Api.Length(in x);", "E0205"),
         ("let mut x = 1; ByRef.Api.Location(ref x);", "E0213"),
         ("let x = 1; ByRef.Api.InputFlag(in x);", "E0203"),
