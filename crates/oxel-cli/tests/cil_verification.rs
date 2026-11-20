@@ -65,6 +65,25 @@ fn verifies_managed_assemblies_with_ilverify() {
         verify(Path::new(assembly.trim()));
     }
 
+    let batch = examples.join("rust_bindgen/batch");
+    let bindings = directory.join("batch.ffi.oxel");
+    success(
+        Command::new(env!("CARGO_BIN_EXE_oxel"))
+            .current_dir(directory)
+            .arg("bindgen")
+            .arg(batch.join("abi.rs"))
+            .args(["--library", "oxel_rust_batch", "-o"])
+            .arg(&bindings),
+    );
+    let assembly = success(
+        Command::new(env!("CARGO_BIN_EXE_oxel"))
+            .current_dir(directory)
+            .args(["compile", "--framework"])
+            .arg(batch.join("main.oxel"))
+            .arg(bindings),
+    );
+    verify(Path::new(assembly.trim()));
+
     let source = include_str!("../../../examples/unit_tests.oxel");
     let ignored = "#[test] #[ignore] fn skipped() { assert(false); }";
     let assembly = directory.join("test_runner.dll");

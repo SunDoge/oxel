@@ -1,5 +1,6 @@
 //! Generate Oxel declarations for the explicit C ABI of a Rust source file.
 
+mod extended;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write as _,
@@ -132,6 +133,14 @@ fn generate(rust: &str, library: &str) -> syn::Result<String> {
 
     let mut types = NativeTypes {
         definitions,
+        aliases: file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Type(alias) => Some((alias.ident.unraw().to_string(), alias)),
+                _ => None,
+            })
+            .collect(),
         used: HashSet::new(),
         pending: Vec::new(),
     };
@@ -293,12 +302,14 @@ fn attribute_string(meta: &Meta) -> syn::Result<&syn::LitStr> {
     ))
 }
 
-#[derive(Clone, Copy)]
 enum Passing {
     Ref,
     Out,
     Utf8,
     Utf8Nullable,
+    Address,
+    Callback(bool),
+    Buffer { length: String, write: bool },
 }
 
 #[derive(Default)]
@@ -321,35 +332,54 @@ impl Annotations {
             };
             let words: Vec<_> = hint.split_whitespace().collect();
             let span = doc.span();
-            match words.as_slice() {
-                ["skip"] if !annotations.skip => annotations.skip = true,
+            let parameter = match words.as_slice() {
+                ["skip"] if !annotations.skip => {
+                    annotations.skip = true;
+                    continue;
+                }
                 ["rename", name] if annotations.name.is_none() => {
                     annotations.name = Some(((*name).into(), span));
+                    continue;
                 }
-                [mode @ ("ref" | "out" | "utf8" | "utf8_nullable"), parameter] => {
+                [
+                    mode @ ("ref" | "out" | "utf8" | "utf8_nullable" | "address" | "callback"
+                    | "callback_retained"),
+                    parameter,
+                ] => {
                     let passing = match *mode {
                         "ref" => Passing::Ref,
                         "out" => Passing::Out,
                         "utf8" => Passing::Utf8,
-                        _ => Passing::Utf8Nullable,
+                        "utf8_nullable" => Passing::Utf8Nullable,
+                        "address" => Passing::Address,
+                        _ => Passing::Callback(*mode == "callback_retained"),
                     };
-                    if annotations
-                        .parameters
-                        .insert((*parameter).into(), (passing, span))
-                        .is_some()
-                    {
-                        return Err(syn::Error::new(
-                            span,
-                            format!("duplicate Oxel annotation for parameter '{parameter}'"),
-                        ));
-                    }
+                    (*parameter, passing)
                 }
+                [mode @ ("buffer" | "buffer_mut"), parameter, length] => (
+                    *parameter,
+                    Passing::Buffer {
+                        length: (*length).into(),
+                        write: *mode == "buffer_mut",
+                    },
+                ),
                 _ => {
                     return Err(syn::Error::new(
                         span,
-                        "expected 'oxel: skip', 'oxel: rename NAME', or 'oxel: MODE PARAMETER' with ref, out, utf8 or utf8_nullable",
+                        "invalid Oxel annotation; use skip, rename NAME, MODE PARAMETER, or buffer[_mut] PARAMETER LENGTH",
                     ));
                 }
+            };
+            let (name, passing) = parameter;
+            if annotations
+                .parameters
+                .insert(name.into(), (passing, span))
+                .is_some()
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!("duplicate Oxel annotation for parameter '{name}'"),
+                ));
             }
         }
         Ok(annotations)
@@ -358,6 +388,7 @@ impl Annotations {
 
 struct NativeTypes<'rust> {
     definitions: HashMap<String, &'rust ItemStruct>,
+    aliases: HashMap<String, &'rust syn::ItemType>,
     used: HashSet<String>,
     pending: Vec<String>,
 }
@@ -366,7 +397,11 @@ impl NativeTypes<'_> {
     fn by_value(&mut self, ty: &Type) -> syn::Result<String> {
         if let Some(name) = simple_type(ty) {
             if numeric(&name) {
-                return Ok(name);
+                return Ok(match name.as_str() {
+                    "isize" => "nint".into(),
+                    "usize" => "nuint".into(),
+                    _ => name,
+                });
             }
             if self.definitions.contains_key(&name) {
                 if self.used.insert(name.clone()) {
@@ -390,12 +425,12 @@ impl NativeTypes<'_> {
             if matches!(ty, Type::Ptr(_)) {
                 return Err(syn::Error::new(
                     ty.span(),
-                    "a Rust pointer parameter needs an explicit Oxel annotation (ref, out, utf8 or utf8_nullable)",
+                    "a Rust pointer parameter needs an explicit Oxel annotation",
                 ));
             }
             return Ok(("", self.by_value(ty)?));
         };
-        match (passing, ty) {
+        match (&passing, ty) {
             (Passing::Ref | Passing::Out, Type::Ptr(ptr)) if ptr.mutability.is_some() => {
                 let prefix = if matches!(passing, Passing::Ref) {
                     "ref "
@@ -422,6 +457,22 @@ impl NativeTypes<'_> {
                 span,
                 "oxel: utf8 and oxel: utf8_nullable require *const u8, *const core::ffi::c_char or *const std::ffi::c_char",
             )),
+            (Passing::Address, Type::Ptr(ptr)) => self.address(ptr).map(|ty| ("", ty)),
+            (Passing::Address, _) => Err(syn::Error::new(
+                span,
+                "oxel: address requires a raw pointer parameter",
+            )),
+            (Passing::Callback(retained), _) => self.callback(ty).map(|ty| {
+                (
+                    if *retained {
+                        "callback_retained "
+                    } else {
+                        "callback "
+                    },
+                    ty,
+                )
+            }),
+            (Passing::Buffer { .. }, _) => unreachable!("buffer requires the following parameter"),
         }
     }
 }
@@ -437,15 +488,32 @@ fn simple_type(ty: &Type) -> Option<String> {
 fn numeric(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64"
+        "i8" | "u8"
+            | "i16"
+            | "u16"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "f32"
+            | "f64"
+            | "isize"
+            | "usize"
     )
 }
 
 fn check_primitive_name(ident: &syn::Ident) -> syn::Result<()> {
-    if numeric(&ident.unraw().to_string()) {
+    let name = ident.unraw().to_string();
+    if numeric(&name) {
         return Err(syn::Error::new(
             ident.span(),
             "a Rust ABI source file cannot shadow a fixed-width primitive type",
+        ));
+    }
+    if name == "Option" {
+        return Err(syn::Error::new(
+            ident.span(),
+            "a Rust ABI source file cannot shadow the standard Option type",
         ));
     }
     Ok(())
@@ -547,7 +615,11 @@ fn write_struct(name: &str, item: &ItemStruct, types: &mut NativeTypes<'_>) -> s
         let ident = field.ident.as_ref().expect("a named struct field");
         let name = ident.unraw().to_string();
         check_name(&name, ident.span())?;
-        let ty = types.by_value(&field.ty)?;
+        let ty = if let Type::Ptr(ptr) = &field.ty {
+            types.address(ptr)?
+        } else {
+            types.by_value(&field.ty)?
+        };
         writeln!(declaration, "    {name}: {ty},").unwrap();
     }
     declaration.push_str("}\n\n");
@@ -591,34 +663,42 @@ fn write_function(
         ));
     }
     write!(output, "extern \"C\" fn {name}(").unwrap();
-    for (index, input) in sig.inputs.iter().enumerate() {
-        let FnArg::Typed(parameter) = input else {
-            return Err(syn::Error::new(
-                input.span(),
-                "expected a named ABI parameter",
-            ));
-        };
-        check_attributes(&parameter.attrs, &[])?;
-        let Pat::Ident(parameter_name) = parameter.pat.as_ref() else {
-            return Err(syn::Error::new(
-                parameter.pat.span(),
-                "expected a named ABI parameter",
-            ));
-        };
-        if parameter_name.by_ref.is_some() || parameter_name.subpat.is_some() {
-            return Err(syn::Error::new(
-                parameter_name.span(),
-                "expected a named ABI parameter",
-            ));
-        }
-        let parameter_name = parameter_name.ident.unraw().to_string();
-        check_name(&parameter_name, parameter.pat.span())?;
+    let mut inputs = sig.inputs.iter();
+    let mut separator = "";
+    while let Some(input) = inputs.next() {
+        let (parameter_name, ty) = named_parameter(input)?;
+        check_name(&parameter_name, input.span())?;
         let annotation = annotations.parameters.remove(&parameter_name);
-        let (passing, ty) = types.parameter(&parameter.ty, annotation)?;
-        if index != 0 {
-            output.push_str(", ");
+        let retained = matches!(annotation, Some((Passing::Callback(true), _)));
+        let (passing, ty) = if let Some((Passing::Buffer { length, write }, span)) = annotation {
+            let length_input = inputs.next().ok_or_else(|| {
+                syn::Error::new(span, "a buffer length must immediately follow its pointer")
+            })?;
+            let (length_name, length_ty) = named_parameter(length_input)?;
+            if length_name != length || annotations.parameters.contains_key(&length) {
+                return Err(syn::Error::new(
+                    span,
+                    "the named, unannotated buffer length must immediately follow its pointer",
+                ));
+            }
+            types.buffer(ty, length_ty, write, span)?
+        } else {
+            types.parameter(ty, annotation)?
+        };
+        write!(output, "{separator}{passing}{parameter_name}: {ty}").unwrap();
+        if retained {
+            let root = format!("{parameter_name}_root");
+            for raw in &sig.inputs {
+                if named_parameter(raw)?.0 == root {
+                    return Err(syn::Error::new(
+                        raw.span(),
+                        format!("parameter '{root}' conflicts with the generated callback root"),
+                    ));
+                }
+            }
+            write!(output, ", callback_root {root}: object?").unwrap();
         }
-        write!(output, "{passing}{parameter_name}: {ty}").unwrap();
+        separator = ", ";
     }
     if let Some((name, (_, span))) = annotations
         .parameters
@@ -642,6 +722,22 @@ fn write_function(
     }
     output.push_str(";\n");
     Ok(())
+}
+
+fn named_parameter(input: &FnArg) -> syn::Result<(String, &Type)> {
+    if let FnArg::Typed(parameter) = input {
+        check_attributes(&parameter.attrs, &[])?;
+        if let Pat::Ident(name) = parameter.pat.as_ref()
+            && name.by_ref.is_none()
+            && name.subpat.is_none()
+        {
+            return Ok((name.ident.unraw().to_string(), &parameter.ty));
+        }
+    }
+    Err(syn::Error::new(
+        input.span(),
+        "expected a named ABI parameter",
+    ))
 }
 
 fn reject_conditional(attrs: &[Attribute]) -> syn::Result<()> {

@@ -29,6 +29,26 @@ fn native_import_diagnostics_validate_the_declaration_before_linking() {
             "native return types",
         ),
         (
+            r#"extern "C" fn value(buffer data: i32[]?) = "test";"#,
+            "E0343",
+            "requires a non-null array",
+        ),
+        (
+            r#"extern "C" fn value(buffer data: string[]) = "test";"#,
+            "E0343",
+            "native buffer elements",
+        ),
+        (
+            r#"extern "C" fn value(callback handler: i32) = "test";"#,
+            "E0343",
+            "requires a CLR delegate",
+        ),
+        (
+            r#"extern "C" fn value(callback_root root: object?) = "test";"#,
+            "E0343",
+            "immediately follow a retained native callback",
+        ),
+        (
             r#"extern "C" fn value() {}"#,
             "E0102",
             "native library name",

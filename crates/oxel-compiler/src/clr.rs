@@ -385,7 +385,8 @@ impl References {
             let value_type = matches!(framework_parent, Some("ValueType" | "Enum"))
                 && !(core_facade && namespace == "System" && name == "Enum");
             let builtin = if core_facade && namespace == "System" && arity == 0 {
-                Type::clr_builtin(name).filter(|&ty| ty.scalar() || ty.reference())
+                Type::clr_builtin(name)
+                    .filter(|&ty| ty.scalar() || ty.reference() || ty.native_word())
             } else {
                 None
             };
@@ -396,7 +397,7 @@ impl References {
                 _ => None,
             };
             let value_struct = class.flags & 0x100 != 0
-                && builtin.is_none()
+                && builtin.is_none_or(Type::native_word)
                 && !(core_facade && namespace == "System" && name == "Void")
                 && framework_parent == Some("ValueType")
                 && (class.extends.table == Some(TableId::TypeDef)
@@ -988,6 +989,12 @@ impl References {
         };
         let definition = self.bind_class(link)?;
         let class = &self.types[definition];
+        if value
+            && arguments.is_empty()
+            && let Some(ty) = class.builtin.filter(|ty| ty.native_word())
+        {
+            return Some(ty);
+        }
         let valid_kind = if value {
             class.value_struct || class.enum_storage.is_some()
         } else {

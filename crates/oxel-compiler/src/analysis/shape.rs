@@ -17,7 +17,7 @@ pub(super) fn signature(function: &Function<'_>) -> Hash {
     generics(&mut hash, &function.type_parameters, &function.type_bounds);
     length(&mut hash, function.parameters.len());
     for parameter in &function.parameters {
-        hash.update(&[parameter.passing as u8]);
+        name(&mut hash, parameter.passing.prefix());
         name(&mut hash, parameter.name);
         path(&mut hash, &parameter.annotation);
     }

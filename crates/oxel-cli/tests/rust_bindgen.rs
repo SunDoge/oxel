@@ -99,12 +99,32 @@ fn reports_unsupported_abi_and_preserves_the_previous_output() {
             "conditional Rust ABI declarations",
         ),
         (
-            "#[unsafe(no_mangle)]\npub extern \"C\" fn run() -> usize { 0 }",
+            "#[unsafe(no_mangle)]\npub extern \"C\" fn run() -> u128 { 0 }",
             "expected a fixed-width number",
         ),
         (
             "type i32 = u64;\n#[unsafe(no_mangle)]\npub extern \"C\" fn run() -> i32 { 0 }",
             "cannot shadow a fixed-width primitive",
+        ),
+        (
+            "/// oxel: buffer input len\n#[unsafe(no_mangle)]\npub extern \"C\" fn run(input: *const u8, tag: u32, len: u32) {}",
+            "immediately follow its pointer",
+        ),
+        (
+            "/// oxel: buffer_mut input len\n#[unsafe(no_mangle)]\npub extern \"C\" fn run(input: *const u8, len: u32) {}",
+            "buffer_mut requires *mut",
+        ),
+        (
+            "/// oxel: buffer input len\n#[unsafe(no_mangle)]\npub extern \"C\" fn run(input: *const u8, len: i32) {}",
+            "must be usize, u32 or u64",
+        ),
+        (
+            "/// oxel: callback handler\n#[unsafe(no_mangle)]\npub extern \"C\" fn run(handler: fn(i32) -> i32) {}",
+            "requires an extern \"C\" function pointer",
+        ),
+        (
+            "/// oxel: address data\n#[unsafe(no_mangle)]\npub extern \"C\" fn run(data: *const [u8]) {}",
+            "expected a thin address",
         ),
     ] {
         fs::write(&source, abi).unwrap();
@@ -141,6 +161,84 @@ fn reports_unsupported_abi_and_preserves_the_previous_output() {
         .unwrap();
     assert!(!result.status.success());
     assert_eq!(fs::read_to_string(source).unwrap(), ABI);
+}
+
+#[test]
+fn generates_buffer_widths_and_borrows_the_callback_pointer_layout() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    fs::write(
+        root.join("abi.rs"),
+        r#"
+#[repr(C)]
+pub struct Event { address: *mut core::ffi::c_void, length: usize }
+type Notify = unsafe extern "C" fn(*const Event);
+/// oxel: buffer commands length
+/// oxel: callback notify
+#[unsafe(no_mangle)]
+pub extern "C" fn process(commands: *const Event, length: u64, notify: Option<Notify>) {}
+"#,
+    )
+    .unwrap();
+    let bindings = String::from_utf8(success(oxel(root).env("PATH", "").args([
+        "bindgen",
+        "abi.rs",
+        "--library",
+        "test",
+    ])))
+    .unwrap();
+    assert!(bindings.contains("struct Event {\n    address: nint,\n    length: nuint,"));
+    assert!(
+        bindings
+            .contains("process(buffer64 commands: Event[], callback notify: System.Action<nint>?)")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn calls_rust_with_generated_batch_buffers_and_retained_callbacks() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    fs::create_dir(root.join("target")).unwrap();
+    for (name, source) in [
+        (
+            "abi.rs",
+            include_str!("../../../examples/rust_bindgen/batch/abi.rs"),
+        ),
+        (
+            "main.oxel",
+            include_str!("../../../examples/rust_bindgen/batch/main.oxel"),
+        ),
+        (
+            "oxel.toml",
+            include_str!("../../../examples/rust_bindgen/batch/oxel.toml"),
+        ),
+    ] {
+        fs::write(root.join(name), source).unwrap();
+    }
+    success(Command::new("rustc").current_dir(root).args([
+        "--crate-type",
+        "cdylib",
+        "--edition",
+        "2024",
+        "abi.rs",
+        "-o",
+        "target/liboxel_rust_batch.so",
+    ]));
+    success(oxel(root).args([
+        "bindgen",
+        "abi.rs",
+        "--library",
+        "oxel_rust_batch",
+        "-o",
+        "target/batch.ffi.oxel",
+    ]));
+    let output = success(oxel(root).env_remove("LD_LIBRARY_PATH").arg("run"));
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        ["30", "15", "0", "65", "-1", "42", "-1"]
+    );
 }
 
 #[cfg(target_os = "linux")]

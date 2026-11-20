@@ -1,5 +1,7 @@
 //! Packages CIL and CLR metadata in a portable, framework-dependent DLL.
 
+mod native;
+
 use std::collections::HashMap;
 
 use clrmeta::{
@@ -110,13 +112,20 @@ pub(super) fn write(
             namespace_programs.push((owner, row));
         }
     }
-    let method_count = source_method_count
+    let first_native_wrapper = source_method_count
         + methods
             .iter()
             .filter(|method| matches!(method.body, MethodBody::Async(..)))
             .count();
+    let native = native::Imports::new(
+        &methods,
+        &order,
+        first_native_wrapper,
+        FIRST_STRUCT_ROW as usize + program.structs.len() + namespace_programs.len(),
+    );
+    let method_count = native.method_end();
     if method_count >= 0x00ff_ffff
-        || program.structs.len() + namespace_programs.len()
+        || program.structs.len() + namespace_programs.len() + native.callback_count()
             > 0x00ff_ffff - (FIRST_STRUCT_ROW as usize - 1)
         || field_count >= 0x00ff_ffff
     {
@@ -124,7 +133,8 @@ pub(super) fn write(
     }
     // A narrow metadata list cannot represent the one-past-end index 65536.
     let narrow_limit = usize::from(u16::MAX);
-    if (!program.structs.is_empty() && method_count == narrow_limit)
+    if ((!program.structs.is_empty() || native.callback_count() != 0)
+        && method_count == narrow_limit)
         || (field_count == narrow_limit
             && (!namespace_programs.is_empty()
                 || program
@@ -151,7 +161,7 @@ pub(super) fn write(
     metadata.method_rows = method_rows;
     let first_named_method = namespace_programs
         .first()
-        .map_or(method_count as u32 + 1, |&(_, row)| row);
+        .map_or(native.first_callback_method(), |&(_, row)| row);
     metadata.add_structs(&program.structs, namespace, first_named_method);
     for (owner, first_method) in namespace_programs {
         metadata.add_namespace_program(namespace, owner, first_method);
@@ -164,6 +174,7 @@ pub(super) fn write(
             &function.type_parameters,
             &function.signature.bounds,
         );
+        let wrapper_parameters;
         let (rva, native_flags, impl_flags, parameters) = match &function.body {
             MethodBody::Managed(block) => {
                 text.align(4);
@@ -207,9 +218,26 @@ pub(super) fn write(
                 body.write(&mut text, function.span)?;
                 (rva, 0, 0, &[][..])
             }
-            MethodBody::Native { import, parameters } => {
-                metadata.add_native_import(method_index as u32 + 1, import);
-                (0, 0x2000, 0x0080, parameters.as_slice()) // PInvokeImpl, PreserveSig
+            MethodBody::Native {
+                import, parameters, ..
+            } => {
+                if let Some(wrapper) = native.wrapper(logical_id) {
+                    text.align(4);
+                    let rva = TEXT_RVA + CLI_HEADER_SIZE + image_offset(text.len())?;
+                    wrapper.emit(&mut text, &mut metadata, function, parameters)?;
+                    wrapper_parameters = parameters
+                        .iter()
+                        .map(|&mode| match mode {
+                            ParameterPassing::Ref | ParameterPassing::Out => mode,
+                            ParameterPassing::CallbackRoot => ParameterPassing::Out,
+                            _ => ParameterPassing::Value,
+                        })
+                        .collect::<Vec<_>>();
+                    (rva, 0, 0, wrapper_parameters.as_slice())
+                } else {
+                    metadata.add_native_import(method_index as u32 + 1, import);
+                    (0, 0x2000, 0x0080, parameters.as_slice()) // PInvokeImpl, PreserveSig
+                }
             }
         };
         let signature = metadata.signature_with_modes(
@@ -271,6 +299,7 @@ pub(super) fn write(
             param_list,
         });
     }
+    native.finish(&mut metadata);
 
     text.align(4);
     let metadata_offset = CLI_HEADER_SIZE + image_offset(text.len())?;
@@ -431,7 +460,7 @@ impl<'refs> Tables<'refs> {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
         let mut guids = GuidHeap::new();
-        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 49 module id");
+        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 50 module id");
         hash.update(name.as_bytes());
         hash.update(b"\0");
         if namespace.is_some() {
@@ -716,6 +745,8 @@ impl<'refs> Tables<'refs> {
             let flags = match passing {
                 Some(ParameterPassing::Out) => 0x0002,  // Out
                 Some(ParameterPassing::Utf8) => 0x2000, // HasFieldMarshal
+                Some(ParameterPassing::Buffer(_, write)) => 0x2001 | if *write { 2 } else { 0 },
+                Some(ParameterPassing::Callback(_)) => 0x2000,
                 _ => 0,
             };
             if nullable.is_empty() && flags == 0 {
@@ -728,10 +759,16 @@ impl<'refs> Tables<'refs> {
             });
             let parent = index(TableId::Param, self.parameters.len() as u32);
             self.add_nullable_attribute(parent, &nullable);
-            if passing == Some(&ParameterPassing::Utf8) {
+            let marshal = match passing {
+                Some(ParameterPassing::Utf8) => &[0x30][..], // NATIVE_TYPE_LPUTF8STR
+                Some(ParameterPassing::Buffer(..)) => &[0x2a, 0x50], // LPArray, default element type
+                Some(ParameterPassing::Callback(_)) => &[0x26],      // NATIVE_TYPE_FUNC
+                _ => &[],
+            };
+            if !marshal.is_empty() {
                 self.field_marshals.push(FieldMarshalRow {
                     parent,
-                    native_type: self.blobs.add(&[0x30]), // NATIVE_TYPE_LPUTF8STR
+                    native_type: self.blobs.add(marshal),
                 });
             }
         }
@@ -1075,7 +1112,7 @@ impl<'refs> Tables<'refs> {
     }
 
     fn external_member_parent(&mut self, definition: usize, owner: Option<Type>) -> CodedIndex {
-        if let Some(owner) = owner {
+        if let Some(owner) = owner.filter(|owner| !owner.native_word()) {
             index(TableId::TypeSpec, self.type_spec(owner))
         } else {
             index(TableId::TypeRef, self.type_reference(definition))

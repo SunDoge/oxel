@@ -11,6 +11,7 @@ mod inference;
 mod iteration;
 mod lambdas;
 mod namespaces;
+mod native;
 mod nullability;
 mod test_harness;
 mod unions;
@@ -33,6 +34,7 @@ pub(crate) use hierarchy::Member;
 pub(crate) use indexers::IndexUpdate;
 use iteration::local_interface_call;
 use namespaces::{Scopes, path_name};
+pub(crate) use native::NativeCallback;
 
 use crate::{
     ArgumentMode, AssemblyKind, CallableSignature, Diagnostic, DiagnosticFix, Occurrence,
@@ -69,7 +71,11 @@ impl Type {
     }
 
     pub(crate) fn imported_value(self) -> bool {
-        matches!(self, Self::ClrEnum(_)) || self.clr_struct()
+        matches!(self, Self::ClrEnum(_)) || self.native_word() || self.clr_struct()
+    }
+
+    pub(crate) fn native_word(self) -> bool {
+        matches!(self, Self::IntPtr | Self::UIntPtr)
     }
 
     pub(crate) fn clr_struct(self) -> bool {
@@ -479,7 +485,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
     }
 
     fn require_native_type(&self, ty: Type, span: Span, context: &str) -> Checked<()> {
-        if ty.numeric() {
+        if ty.numeric() || ty.native_word() {
             return Ok(());
         }
 
@@ -488,7 +494,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         let mut pending = vec![(ty, None)];
         let mut seen = HashSet::new();
         while let Some((ty, field)) = pending.pop() {
-            if ty.numeric() || !seen.insert(ty) {
+            if ty.numeric() || ty.native_word() || !seen.insert(ty) {
                 continue;
             }
             if let Type::Struct(id) = ty {
@@ -661,7 +667,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         }
         if arguments.is_empty() {
             return Ok(match kind {
-                InstanceKind::External(definition) if external_value => Type::ClrStruct(definition),
+                InstanceKind::External(definition) if external_value => self
+                    .references
+                    .imported_type(definition)
+                    .builtin
+                    .filter(|ty| ty.native_word())
+                    .unwrap_or(Type::ClrStruct(definition)),
                 InstanceKind::External(definition) => Type::External(definition),
                 InstanceKind::Struct(definition) => Type::Struct(definition),
                 InstanceKind::Array => unreachable!("array element type"),
@@ -1171,6 +1182,7 @@ pub(crate) enum MethodBody {
     Native {
         import: syntax::NativeImport,
         parameters: Vec<syntax::ParameterPassing>,
+        callbacks: Vec<NativeCallback>,
     },
 }
 
@@ -2020,6 +2032,15 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
                     .iter()
                     .map(|param| param.passing)
                     .collect(),
+                callbacks: function
+                    .parameters
+                    .iter()
+                    .zip(&signature.parameters)
+                    .filter(|(param, _)| {
+                        matches!(param.passing, syntax::ParameterPassing::Callback(_))
+                    })
+                    .map(|(param, &ty)| native::callback(types, ty, param.annotation.span))
+                    .collect::<Checked<_>>()?,
             },
         };
         Ok(Function {
@@ -2043,7 +2064,12 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
 }
 
 fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checked<Signature> {
-    if function.parameters.len() > u16::MAX as usize {
+    let native_count: usize = function
+        .parameters
+        .iter()
+        .map(|param| param.passing.native_width())
+        .sum();
+    if function.parameters.len().max(native_count) > u16::MAX as usize {
         return Err(Diagnostic::new(
             "E0207",
             function.name_span,
@@ -2080,7 +2106,7 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
     }
     let mut names = HashSet::new();
     let mut parameters = Vec::new();
-    for parameter in &function.parameters {
+    for (index, parameter) in function.parameters.iter().enumerate() {
         let name = parameter.name;
         let annotation = &parameter.annotation;
         if !names.insert(name) {
@@ -2105,6 +2131,50 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
                             "E0343",
                             annotation.span,
                             "'utf8' requires a string or string? parameter",
+                        ));
+                    }
+                }
+                syntax::ParameterPassing::Buffer(..) => {
+                    let element = types
+                        .array_element(ty)
+                        .filter(|_| !ty.is_nullable())
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                "E0343",
+                                annotation.span,
+                                "a native buffer requires a non-null array",
+                            )
+                        })?;
+                    types.require_native_type(
+                        element,
+                        annotation.span,
+                        "native buffer elements",
+                    )?;
+                }
+                syntax::ParameterPassing::Callback(retained) => {
+                    native::callback(types, ty, annotation.span)?;
+                    if retained
+                        && !function.parameters.get(index + 1).is_some_and(|next| {
+                            next.passing == syntax::ParameterPassing::CallbackRoot
+                        })
+                    {
+                        return Err(Diagnostic::new(
+                            "E0343",
+                            annotation.span,
+                            "a retained native callback requires a following callback_root parameter",
+                        ));
+                    }
+                }
+                syntax::ParameterPassing::CallbackRoot => {
+                    if ty != Type::NullableObject
+                        || index == 0
+                        || function.parameters[index - 1].passing
+                            != syntax::ParameterPassing::Callback(true)
+                    {
+                        return Err(Diagnostic::new(
+                            "E0343",
+                            annotation.span,
+                            "callback_root must be object? and immediately follow a retained native callback",
                         ));
                     }
                 }

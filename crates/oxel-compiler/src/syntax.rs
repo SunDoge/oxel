@@ -724,15 +724,33 @@ pub(crate) enum ParameterPassing {
     Ref,
     Out,
     Utf8,
+    Buffer(BufferLength, bool),
+    Callback(bool),
+    CallbackRoot,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BufferLength {
+    Native,
+    U32,
+    U64,
 }
 
 impl ParameterPassing {
+    pub fn native_width(self) -> usize {
+        match self {
+            Self::Buffer(..) => 2,
+            Self::CallbackRoot => 0,
+            _ => 1,
+        }
+    }
+
     pub fn mode(self) -> ArgumentMode {
         match self {
-            Self::Value | Self::Utf8 => ArgumentMode::Value,
+            Self::Value | Self::Utf8 | Self::Buffer(..) | Self::Callback(_) => ArgumentMode::Value,
             Self::In => ArgumentMode::In,
             Self::Ref => ArgumentMode::Ref,
-            Self::Out => ArgumentMode::Out,
+            Self::Out | Self::CallbackRoot => ArgumentMode::Out,
         }
     }
 
@@ -743,6 +761,15 @@ impl ParameterPassing {
             Self::Ref => "ref ",
             Self::Out => "out ",
             Self::Utf8 => "utf8 ",
+            Self::Buffer(BufferLength::Native, false) => "buffer ",
+            Self::Buffer(BufferLength::U32, false) => "buffer32 ",
+            Self::Buffer(BufferLength::U64, false) => "buffer64 ",
+            Self::Buffer(BufferLength::Native, true) => "buffer_mut ",
+            Self::Buffer(BufferLength::U32, true) => "buffer_mut32 ",
+            Self::Buffer(BufferLength::U64, true) => "buffer_mut64 ",
+            Self::Callback(false) => "callback ",
+            Self::Callback(true) => "callback_retained ",
+            Self::CallbackRoot => "callback_root ",
         }
     }
 }
@@ -2497,6 +2524,15 @@ impl<'src> Parser<'src> {
             "ref" => ParameterPassing::Ref,
             "out" => ParameterPassing::Out,
             "utf8" if native => ParameterPassing::Utf8,
+            "buffer" if native => ParameterPassing::Buffer(BufferLength::Native, false),
+            "buffer32" if native => ParameterPassing::Buffer(BufferLength::U32, false),
+            "buffer64" if native => ParameterPassing::Buffer(BufferLength::U64, false),
+            "buffer_mut" if native => ParameterPassing::Buffer(BufferLength::Native, true),
+            "buffer_mut32" if native => ParameterPassing::Buffer(BufferLength::U32, true),
+            "buffer_mut64" if native => ParameterPassing::Buffer(BufferLength::U64, true),
+            "callback" if native => ParameterPassing::Callback(false),
+            "callback_retained" if native => ParameterPassing::Callback(true),
+            "callback_root" if native => ParameterPassing::CallbackRoot,
             _ => return None,
         };
         Some((passing, self.bump()))

@@ -703,7 +703,7 @@ Both executions print the same results for numeric values, structs, pointer upda
 
 Run `oxel bindgen path/to/abi.rs --library my_library -o path/to/library.ffi.oxel` to generate Oxel source from a single Rust ABI file. The library name is the name that CoreCLR or Native AOT resolves when the generated code makes a call. Omit `-o` to write the bindings to standard output. Add the generated file to the application's `sources` and package the Rust `cdylib` with `native_libraries`.
 
-Use top-level `pub extern "C"` functions with `#[unsafe(no_mangle)]` or `#[unsafe(export_name = "...")]`. Fixed-width numbers and nonempty, nongeneric `#[repr(C)]` structs with named numeric or nested struct fields in the same file map to existing Oxel types. Use explicit Rust imports and keep the ABI type declarations in that file. Conditional ABI declarations, macro expansion, type aliases, function pointers, and buffer pointers with separate lengths require manual bindings or an ABI adapter. Packed or custom-aligned structs are rejected.
+Use top-level `pub extern "C"` functions with `#[unsafe(no_mangle)]` or `#[unsafe(export_name = "...")]`. Fixed-width numbers, native-sized numbers (`isize` as `nint`, `usize` as `nuint`), and nonempty, nongeneric `#[repr(C)]` structs with named ABI fields in the same file map to Oxel types. Use explicit Rust imports and keep the ABI type declarations in that file. Supported raw pointer fields are emitted as `nint`. Conditional declarations, macro-generated exports, packed or custom-aligned structs, and general type aliases require a separate ABI declaration.
 
 Use Rust doc attributes on an exported function to describe how Oxel should pass a pointer or name the binding. These attributes compile with ordinary Rust. A doc comment such as `/// oxel: out result` has the same effect.
 
@@ -713,6 +713,11 @@ Use Rust doc attributes on an exported function to describe how Oxel should pass
 | `#[doc = "oxel: out result"]` | `out` for a `*mut T` that the Rust function initializes before returning |
 | `#[doc = "oxel: utf8 text"]` | `utf8 text: string` for a NUL-terminated read-only string |
 | `#[doc = "oxel: utf8_nullable text"]` | `utf8 text: string?`, where null becomes a null pointer |
+| `#[doc = "oxel: buffer data count"]` | Pass a `T[]` as `*const T` followed by its element count |
+| `#[doc = "oxel: buffer_mut data count"]` | Pass a writable `T[]` as `*mut T` followed by its element count |
+| `#[doc = "oxel: address context"]` | Pass a thin raw pointer as `nint` |
+| `#[doc = "oxel: callback handler"]` | Pass a Cdecl callback that Rust uses during this call |
+| `#[doc = "oxel: callback_retained handler"]` | Pass a Cdecl callback and receive an `out` root to keep alive until Rust unregisters it |
 | `#[doc = "oxel: rename name"]` | Choose an Oxel function name while preserving the Rust symbol |
 | `#[doc = "oxel: skip"]` | Omit the export |
 
@@ -725,6 +730,25 @@ rustc --edition 2024 --crate-type cdylib examples/rust_bindgen/abi.rs \
 oxel bindgen examples/rust_bindgen/abi.rs --library oxel_rust_math \
   -o examples/rust_bindgen/target/math.ffi.oxel
 oxel run --manifest-path examples/rust_bindgen/oxel.toml
+```
+
+#### Rust buffers and callbacks
+
+The Rust count must immediately follow its pointer and use `usize`, `u32`, or `u64`. The generator selects the corresponding Oxel declaration modifier, such as `buffer`, `buffer32`, or `buffer64`. Oxel passes the array's element count automatically. The mutable forms also expose writes to the caller. Rust must use these buffers only during the call and leave them untouched for the read-only form. An empty buffer has count zero and must never be dereferenced.
+
+Callbacks use `System.Action` or `System.Func`, so projects using them need framework references. The generator supports Cdecl function-pointer parameters, same-file aliases for them, and `Option<...>` for nullable callbacks. Within a callback signature, thin addresses are represented as `nint`. Use a supported ABI pointee type or a qualified `core::ffi::c_void` or `std::ffi::c_void` for an opaque address. Callbacks must handle exceptions before returning across the native boundary. Calling function pointers returned by Rust is outside this interface.
+
+A retained callback adds a managed `out` argument to the Oxel declaration. Keep this root reachable until the native side has stopped calling the function pointer. In a local scope, perform unregistration before `System.GC.KeepAlive(root)`. Use a rooted field or `GCHandle` for longer-lived registrations. [Native delegate lifetime](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.marshal.getfunctionpointerfordelegate)
+
+The [batch example](examples/rust_bindgen/batch/main.oxel) lets Rust mutate an Oxel array and invokes a retained callback after a forced .NET collection.
+
+```sh
+mkdir -p examples/rust_bindgen/batch/target
+rustc --edition 2024 --crate-type cdylib examples/rust_bindgen/batch/abi.rs \
+  -o examples/rust_bindgen/batch/target/liboxel_rust_batch.so
+oxel bindgen examples/rust_bindgen/batch/abi.rs --library oxel_rust_batch \
+  -o examples/rust_bindgen/batch/target/batch.ffi.oxel
+oxel run --manifest-path examples/rust_bindgen/batch/oxel.toml
 ```
 
 ## Native AOT publishing

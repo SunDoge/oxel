@@ -1,0 +1,5 @@
+[package]
+name = "rust-batch"
+framework = true
+sources = ["main.oxel", "target/batch.ffi.oxel"]
+native_libraries = ["target/liboxel_rust_batch.so"]

@@ -65,6 +65,8 @@ define_types! {
         F32,    "f32",    "Single",  0x0c;
         F64,    "f64",    "Double",  0x0d;
         String, "string", "String",  0x0e;
+        IntPtr, "nint",   "IntPtr",  0x18;
+        UIntPtr,"nuint",  "UIntPtr", 0x19;
         Object, "object", "Object",  0x1c;
     }
 

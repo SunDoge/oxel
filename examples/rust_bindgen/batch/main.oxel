@@ -1,0 +1,20 @@
+fn main() {
+    let commands = [Command { value: 10, key: 1 }, Command { value: 10, key: 2 }];
+    let offset = 5;
+    System.Console.WriteLine(update_commands(commands) |value| { value + offset });
+    System.Console.WriteLine(commands[0].value);
+    System.Console.WriteLine(update_commands([]) |value| { value });
+    System.Console.WriteLine(first_byte([65]));
+    System.Console.WriteLine(first_byte([]));
+
+    let root: object?;
+    set_notify(|context, event| { context.ToInt32() + event + offset }, out root);
+    System.GC.Collect();
+    System.GC.WaitForPendingFinalizers();
+    System.GC.Collect();
+    System.Console.WriteLine(notify(new System.IntPtr(7), 30));
+    let disabled: object?;
+    set_notify(null, out disabled);
+    System.GC.KeepAlive(root);
+    System.Console.WriteLine(notify(System.IntPtr.Zero, 37));
+}
