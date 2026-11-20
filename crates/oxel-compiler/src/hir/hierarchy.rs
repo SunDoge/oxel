@@ -51,6 +51,7 @@ impl Structs<'_, '_> {
 
     pub(super) fn upcasts(&self, actual: Type, expected: Type) -> bool {
         if actual == expected
+            || self.stack_only(actual)
             || actual.is_nullable()
             || self.nullable_underlying(actual).is_some()
             || expected.is_nullable()
@@ -68,6 +69,13 @@ impl Structs<'_, '_> {
             remaining: 32_768,
         };
         check.variant_conversion(actual, expected, target, 0)
+    }
+
+    pub(super) fn stack_only(&self, ty: Type) -> bool {
+        ty.clr_struct()
+            && self
+                .ancestor_id(ty)
+                .is_some_and(|id| self.references.imported_type(id).stack_only)
     }
 
     pub(super) fn inherits(&self, actual: Type, expected: Type) -> bool {
@@ -121,6 +129,9 @@ impl Structs<'_, '_> {
                     continue;
                 };
                 if visited.insert(ty) {
+                    if self.references.imported_type(id).stack_only {
+                        return Some(ty);
+                    }
                     let arguments = self.owner_arguments(Some(ty));
                     let parents: Vec<_> = self
                         .references

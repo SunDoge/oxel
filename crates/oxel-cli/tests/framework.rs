@@ -21,6 +21,99 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn slices_share_arrays_and_cross_clr_signatures_by_value() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let main = project.join("main.oxel");
+    fs::write(&main, include_str!("../../../examples/slices.oxel")).unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"]))
+            .lines()
+            .collect::<Vec<_>>(),
+        ["30", "30", "True"]
+    );
+
+    fs::write(
+        &main,
+        r#"
+        fn bound(value: i32) -> i32 { System.Console.WriteLine(value); value }
+        fn main() {
+            let data = [9, 8, 7];
+            let view = new System.ReadOnlySpan<i32>(data, bound(0), bound(2));
+            System.Console.WriteLine(view[1]);
+            let empty = view.Slice(2, 0);
+            System.Console.WriteLine(empty.Length);
+            try { let invalid = view.Slice(2, -1); }
+            catch (_: System.ArgumentOutOfRangeException) { System.Console.WriteLine(31); };
+            try { let invalid = System.MemoryExtensions.AsSpan(data, 0, 4); }
+            catch (_: System.ArgumentOutOfRangeException) { System.Console.WriteLine(32); };
+            try { let invalid = view[2]; }
+            catch (_: System.IndexOutOfRangeException) { System.Console.WriteLine(33); };
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"]))
+            .lines()
+            .collect::<Vec<_>>(),
+        ["0", "2", "8", "0", "31", "32", "33"]
+    );
+
+    for (source, code, message) in [
+        (
+            "fn main() { let data = [1]; let view = new System.ReadOnlySpan<i32>(data); view[0] = 2; }",
+            "E0204",
+            "read-only",
+        ),
+        (
+            "struct Storage { view: System.ReadOnlySpan<i32> } fn main() {}",
+            "E0350",
+            "field type",
+        ),
+        (
+            "fn bad(data: i32[]) -> System.ReadOnlySpan<i32> { new System.ReadOnlySpan<i32>(data) } fn main() {}",
+            "E0350",
+            "return type",
+        ),
+        (
+            "fn main() { let data = [1]; let boxed: object = new System.ReadOnlySpan<i32>(data); }",
+            "E0301",
+            "expected System.Object",
+        ),
+        (
+            "fn main() { let data = [1]; System.Console.WriteLine(new System.ReadOnlySpan<i32>(data)); }",
+            "E0350",
+            "boxed argument",
+        ),
+        (
+            "fn main() { let data = [1]; let values = [new System.ReadOnlySpan<i32>(data)]; }",
+            "E0350",
+            "array element type",
+        ),
+        (
+            "fn id<T>(value: T) -> T { value } fn main() { let data = [1]; id(new System.ReadOnlySpan<i32>(data)); }",
+            "E0350",
+            "generic argument",
+        ),
+        (
+            "fn main() { let data = [1]; let view = new System.ReadOnlySpan<i32>(data); System.Array.ConvertAll::<i32, i32>([1]) |x| { view[0] + x }; }",
+            "E0350",
+            "captured value",
+        ),
+    ] {
+        fs::write(&main, source).unwrap();
+        let result = oxel(project, &["check", "--framework", "main.oxel"]);
+        assert!(!result.status.success(), "{source}");
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            error.contains(code) && error.contains(message),
+            "{source}\n{error}"
+        );
+    }
+}
+
+#[test]
 fn task_entry_point_awaits_completion_and_maps_the_result() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();
@@ -844,7 +937,7 @@ fn clr_aliases_call_instance_methods_with_reference_or_value_receivers() {
         ),
         ("fn main() { (1).CompareTo(); }", "E0205"),
         (
-            "fn accept(value: System.Span<i32>) {} fn main() {}",
+            "fn accept(value: System.Text.Json.Utf8JsonReader) {} fn main() {}",
             "E0202",
         ),
     ] {

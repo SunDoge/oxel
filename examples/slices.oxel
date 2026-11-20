@@ -1,0 +1,17 @@
+fn read<T>(view: System.ReadOnlySpan<T>, index: i32) -> T {
+    view[index]
+}
+
+fn main() {
+    let buffer = [10, 20, 3, 4];
+    let view = new System.ReadOnlySpan<i32>(buffer, 0, 2);
+    let writable = System.MemoryExtensions.AsSpan(buffer).Slice(0, 2);
+    writable[0] += 20;
+    System.Console.WriteLine(read(view, 0));
+    System.MemoryExtensions.Reverse(writable);
+    System.Console.WriteLine(buffer[1]);
+
+    let expected = [20, 30];
+    let expected = new System.ReadOnlySpan<i32>(expected);
+    System.Console.WriteLine(System.MemoryExtensions.SequenceEqual(view, expected));
+}

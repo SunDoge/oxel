@@ -307,6 +307,7 @@ pub(super) struct Tables<'refs> {
     member_indices: HashMap<(usize, Option<Type>), u32>,
     delegate_ctors: HashMap<Type, u32>,
     external_field_indices: HashMap<(usize, Option<Type>), u32>,
+    slice_indexers: HashMap<Type, u32>,
     methods: Vec<MethodDefRow>,
     module_refs: Vec<ModuleRefRow>,
     module_ref_indices: HashMap<u32, u32>,
@@ -460,6 +461,7 @@ impl<'refs> Tables<'refs> {
             member_indices: HashMap::new(),
             delegate_ctors: HashMap::new(),
             external_field_indices: HashMap::new(),
+            slice_indexers: HashMap::new(),
             methods: Vec::new(),
             module_refs: Vec::new(),
             module_ref_indices: HashMap::new(),
@@ -911,6 +913,25 @@ impl<'refs> Tables<'refs> {
             });
             self.type_refs.len() as u32
         })
+    }
+
+    pub(super) fn slice_indexer(&mut self, owner: Type, readonly: bool) -> u32 {
+        if let Some(&row) = self.slice_indexers.get(&owner) {
+            return MEMBER_REF | row;
+        }
+        let parent = index(TableId::TypeSpec, self.type_spec(owner));
+        let mut signature = Writer::new();
+        signature.write_u8(0x20); // HASTHIS
+        signature.write_u8(1); // one parameter
+        if readonly {
+            signature.write_u8(0x1f); // CMOD_REQD
+            signature.write_compressed_uint((self.in_attribute_type() << 2) | 1);
+        }
+        signature.write_bytes(&[0x10, 0x13, 0, 0x08]); // ref !0 get_Item(int32)
+        let signature = self.blobs.add(signature.as_slice());
+        let row = self.push_member_for(parent, "get_Item", signature);
+        self.slice_indexers.insert(owner, row);
+        MEMBER_REF | row
     }
 
     fn external_member_parent(&mut self, definition: usize, owner: Option<Type>) -> CodedIndex {

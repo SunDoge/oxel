@@ -60,6 +60,7 @@ pub struct References {
     pub(crate) disposable: Option<usize>,
     pub(crate) enumerable: Option<usize>,
     pub(crate) enumerator: Option<usize>,
+    pub(crate) spans: [Option<usize>; 2],
     names: HashMap<String, Vec<usize>>,
 }
 
@@ -102,6 +103,7 @@ pub(crate) struct ImportedType {
     pub(crate) builtin: Option<Type>,
     pub(crate) enum_storage: Option<u8>,
     pub(crate) value_struct: bool,
+    pub(crate) stack_only: bool,
     base: Option<Type>,
     interfaces: Vec<Option<Type>>,
     members: HashMap<String, Vec<usize>>,
@@ -387,13 +389,19 @@ impl References {
             } else {
                 None
             };
+            let stack_only = byref_like.contains(&(index as u32 + 1));
+            let span_kind = match (core_facade && stack_only, namespace, name, arity) {
+                (true, "System", "ReadOnlySpan`1", 1) => Some(0),
+                (true, "System", "Span`1", 1) => Some(1),
+                _ => None,
+            };
             let value_struct = class.flags & 0x100 != 0
                 && builtin.is_none()
                 && !(core_facade && namespace == "System" && name == "Void")
                 && framework_parent == Some("ValueType")
                 && (class.extends.table == Some(TableId::TypeDef)
                     || framework_type_ref(&metadata, class.extends, "System", "ValueType"))
-                && !byref_like.contains(&(index as u32 + 1));
+                && (!stack_only || span_kind.is_some());
             let is_reference = !value_type && class.flags & 0x180 != 0x180;
             let is_interface = class.flags & 0x20 != 0;
             let is_delegate = framework_parent == Some("MulticastDelegate");
@@ -403,6 +411,9 @@ impl References {
                     .iter()
                     .any(|&parameter| parameter != Variance::Invariant);
             let id = self.types.len();
+            if value_struct && let Some(kind) = span_kind {
+                self.spans[kind] = Some(id);
+            }
             if core_facade
                 && value_struct
                 && namespace == "System"
@@ -466,6 +477,7 @@ impl References {
                 builtin,
                 enum_storage,
                 value_struct,
+                stack_only,
                 base: None,
                 interfaces: Vec::new(),
                 members: HashMap::new(),

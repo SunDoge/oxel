@@ -117,7 +117,11 @@ impl<'src> Checker<'_, 'src> {
                 span,
             });
         }
-        if let Some(element) = self.types.array_element(receiver.ty) {
+        if let Some(element) = self.types.array_element(receiver.ty).or_else(|| {
+            self.types
+                .slice_element(receiver.ty)
+                .map(|(element, _)| element)
+        }) {
             return self.index_array(receiver, element, arguments, span, assignment);
         }
         self.require_mutable_struct_receiver(&receiver, assignment.is_some(), span)?;

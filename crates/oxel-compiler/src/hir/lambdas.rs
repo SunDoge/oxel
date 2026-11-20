@@ -150,6 +150,9 @@ impl<'src> Checker<'_, 'src> {
                     "a lambda requires a CLR delegate with a supported Invoke signature",
                 )
             })?;
+        if self.types.stack_only(signature.result) {
+            return Err(stack_only_error(span, "a lambda return type"));
+        }
         if source.parameters.len() != signature.parameters.len()
             || source.parameters.len() >= usize::from(u16::MAX)
         {
@@ -234,6 +237,16 @@ impl<'src> Checker<'_, 'src> {
         }
         let body = nested.block(&source.body, Some(signature.result))?;
         let captures = nested.capture.take().expect("active capture scope");
+        for capture in &captures.uses {
+            let ty = match capture.kind {
+                ExprKind::CaptureCell(Value::Local(index)) => self.locals[usize::from(index)],
+                ExprKind::CaptureCell(Value::CapturedCell(_, ty)) => ty,
+                _ => capture.ty,
+            };
+            if self.types.stack_only(ty) {
+                return Err(stack_only_error(capture.span, "a captured value"));
+            }
+        }
         if !nested.uninitialized.is_empty() {
             assignment::validate(&body, &nested.uninitialized)?;
         }

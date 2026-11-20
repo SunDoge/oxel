@@ -571,6 +571,12 @@ When passing a CLR object binding with `&mut`, both the local and the CLR `ref` 
 
 Managed-reference arguments work with imported methods, constructors, and delegate calls, including calls through interfaces and virtual dispatch. The storage type must match the CLR parameter type, even if a null check has narrowed the type for ordinary reads. `&value` and `&mut value` are call-site forms that follow CLR aliasing rules. The spellings `in value` and `ref value` also work.
 
+### Span views
+
+With `--framework`, use `System.Span<T>` for a writable view and `System.ReadOnlySpan<T>` for a read-only view. Create a view with a CLR constructor or `System.MemoryExtensions.AsSpan`, then use `.Slice(start, length)` for a subview and `[index]` to access an element. Views share the underlying storage, and mutations through a writable view are visible through other views of that storage. Pass a view by value to an Oxel or CLR function that accepts its type. [Runnable span example](examples/slices.oxel) · [.NET span guidelines](https://learn.microsoft.com/en-us/dotnet/standard/memory-and-spans/memory-t-usage-guidelines)
+
+Span values are stack-only. Oxel supports them as locals and by-value parameters. Heap storage, boxing, closure capture, and use as generic arguments require other types. Returning a span from an Oxel function or obtaining one from a CLR call with by-reference parameters requires escape analysis and is currently unavailable.
+
 ### Trailing lambdas
 
 Append `{ ... }` to a call to pass a zero-parameter lambda as its last argument. For a delegate with parameters, write `|sender, args| { ... }` after the call and use `_` to discard an unused parameter. The CLR delegate's `Invoke` signature supplies the parameter and return types. A block returning a value uses a tail expression.

@@ -50,6 +50,7 @@ fn verifies_managed_assemblies_with_ilverify() {
         ("alias_interfaces.oxel", true),
         ("mutable_captures.oxel", true),
         ("byref_arguments.oxel", true),
+        ("slices.oxel", true),
         ("catch.oxel", true),
         ("using.oxel", true),
     ] {

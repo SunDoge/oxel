@@ -645,6 +645,9 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         span: Span,
     ) -> Checked<Type> {
         let external_value = matches!(kind, InstanceKind::External(definition) if self.references.imported_type(definition).value_struct);
+        if arguments.iter().any(|&ty| self.stack_only(ty)) {
+            return Err(stack_only_error(span, "a generic or array element type"));
+        }
         if arguments.is_empty() {
             return Ok(match kind {
                 InstanceKind::External(definition) if external_value => Type::ClrStruct(definition),
@@ -941,6 +944,9 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                     })?;
                 }
             }
+        }
+        if from_struct && self.stack_only(ty) {
+            return Err(stack_only_error(path.span, "a field type"));
         }
         Ok(ty)
     }
@@ -2022,6 +2028,9 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
         .transpose()?
         .unwrap_or(Type::Void);
     if let Some(path) = &function.result {
+        if types.stack_only(result) {
+            return Err(stack_only_error(path.span, "an Oxel return type"));
+        }
         if native && result != Type::Void {
             types.require_native_type(result, path.span, "native return types")?;
         }
@@ -4714,6 +4723,9 @@ impl<'a, 'src> Checker<'a, 'src> {
                             Some(ty)
                         }
                         Type::NullableString | Type::Null => Some(Type::String),
+                        ty if self.types.stack_only(ty) => {
+                            return Err(stack_only_error(arg.span, "a boxed argument"));
+                        }
                         _ => Some(Type::Object),
                     };
                     typed.push(if overload == Some(Type::Object) {
@@ -4816,6 +4828,9 @@ impl<'a, 'src> Checker<'a, 'src> {
                             .map_err(|error| explain_argument(error, declaration, args))?;
                         (type_arguments, typed)
                     };
+                if type_arguments.iter().any(|&ty| types.stack_only(ty)) {
+                    return Err(stack_only_error(path.span, "a generic argument"));
+                }
                 if let Some(bound) =
                     self.unsatisfied_bound(signature, &type_arguments, path.span)?
                 {
@@ -4883,6 +4898,9 @@ impl<'a, 'src> Checker<'a, 'src> {
                     ));
                 }
                 Type::String => value,
+                ty if self.types.stack_only(ty) => {
+                    return Err(stack_only_error(part.span, "an interpolation value"));
+                }
                 Type::Null | Type::NullableString => self.coerce(value, Type::NullableString),
                 _ if self.comptime => {
                     return Err(Diagnostic::new(
@@ -4941,6 +4959,9 @@ impl<'a, 'src> Checker<'a, 'src> {
             None => self.scoped_value_type(target)?,
         };
         self.record_annotation(target, ty);
+        if ty != value.ty && self.types.stack_only(ty) {
+            return Err(stack_only_error(target.span, "a cast target"));
+        }
         if value.ty == Type::Never {
             return Ok((value.kind, Type::Never));
         }
@@ -5004,6 +5025,9 @@ impl<'a, 'src> Checker<'a, 'src> {
     }
 
     fn require_runtime_test_type(&self, ty: Type, span: Span) -> Checked<()> {
+        if self.types.stack_only(ty) {
+            return Err(stack_only_error(span, "a runtime type-test target"));
+        }
         if ty.is_nullable() || self.types.nullable_underlying(ty).is_some() {
             return Err(Diagnostic::new(
                 "E0311",
@@ -5189,7 +5213,7 @@ impl<'a, 'src> Checker<'a, 'src> {
         let mut conflicting_modifiers = false;
         for &member in candidates {
             let (signature, forms) = match usage {
-                OverloadUse::Method(_) => {
+                OverloadUse::Method(constructor) => {
                     let method = references.method(member.id);
                     if !type_arguments.is_empty()
                         && usize::from(method.signature.type_arity) != type_arguments.len()
@@ -5218,6 +5242,18 @@ impl<'a, 'src> Checker<'a, 'src> {
                     else {
                         continue;
                     };
+                    if !method.modes.is_empty()
+                        && types.stack_only(constructor.unwrap_or(signature.result))
+                    {
+                        unsupported_signature.get_or_insert_with(|| {
+                            Diagnostic::new(
+                                "E0350",
+                                span,
+                                "returning a span from a CLR call with reference parameters requires escape analysis",
+                            )
+                        });
+                        continue;
+                    }
                     (signature, forms)
                 }
                 OverloadUse::Indexer(access) => {
@@ -5440,6 +5476,9 @@ impl<'a, 'src> Checker<'a, 'src> {
             } else {
                 std::borrow::Cow::Borrowed(type_arguments)
             };
+            if instantiation.iter().any(|&ty| types.stack_only(ty)) {
+                continue;
+            }
             let parameters = signature
                 .parameters
                 .iter()
@@ -5818,6 +5857,9 @@ impl<'a, 'src> Checker<'a, 'src> {
                 ));
             }
         };
+        if self.types.stack_only(ty) {
+            return Err(stack_only_error(span, "a by-reference argument"));
+        }
         if !(mode == ArgumentMode::In
             || binding.mutable
             || mode == ArgumentMode::Out && binding.uninitialized)
@@ -5883,6 +5925,14 @@ impl<'a, 'src> Checker<'a, 'src> {
             ))
         }
     }
+}
+
+fn stack_only_error(span: Span, usage: &str) -> Diagnostic {
+    Diagnostic::new(
+        "E0350",
+        span,
+        format!("a stack-only span cannot be used as {usage}"),
+    )
 }
 
 fn constant_expression(value: &MetadataConstant) -> ExprKind {

@@ -476,6 +476,9 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn can_upcast(&self, actual: Type, expected: Type) -> bool {
+        if self.types.stack_only(actual) {
+            return false;
+        }
         if let Some(underlying) = self.types.nullable_underlying(expected) {
             return actual == Type::Null
                 || (actual == underlying

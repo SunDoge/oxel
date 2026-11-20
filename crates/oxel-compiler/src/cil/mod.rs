@@ -1286,6 +1286,25 @@ impl<'a, 'refs> Body<'a, 'refs> {
         if access.array.ty == Type::Never {
             return;
         }
+        if let Some(slice) = access.slice {
+            self.indexed(0x13, 0x0e, slice.temporary); // stloc
+            self.indexed(0x12, 0x0d, slice.temporary); // ldloca
+            self.pending_expr(&access.index, base, [StackSlot::Address(access.array.ty)]);
+            if access.index.ty == Type::Never {
+                return;
+            }
+            let indexer = self.metadata.slice_indexer(access.array.ty, slice.readonly);
+            self.call(indexer);
+            if let Some(value) = &access.value {
+                self.pending_expr(value, base, [StackSlot::Address(access.element)]);
+                if value.ty == Type::Never {
+                    return;
+                }
+            }
+            let element = self.metadata.runtime_type_token(access.element);
+            self.token_instruction(if access.value.is_some() { 0x81 } else { 0x71 }, element); // stobj / ldobj
+            return;
+        }
         let array = StackSlot::of(&access.array);
         self.pending_expr(&access.index, base, [array]);
         if access.index.ty == Type::Never {

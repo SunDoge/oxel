@@ -13,6 +13,13 @@ pub(crate) struct ArrayAccess {
     pub index: Expr,
     pub element: Type,
     pub value: Option<Expr>,
+    pub slice: Option<SliceAccess>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SliceAccess {
+    pub readonly: bool,
+    pub temporary: u16,
 }
 
 impl Structs<'_, '_> {
@@ -25,6 +32,22 @@ impl Structs<'_, '_> {
             return None;
         };
         Some(self.instance(id).arguments[0])
+    }
+
+    pub(super) fn slice_element(&self, ty: Type) -> Option<(Type, bool)> {
+        let Type::ConstructedClrStruct(id) = ty else {
+            return None;
+        };
+        let instance = self.instance(id);
+        let InstanceKind::External(definition) = instance.kind else {
+            return None;
+        };
+        let kind = self
+            .references
+            .spans
+            .iter()
+            .position(|&id| id == Some(definition))?;
+        Some((instance.arguments[0], kind == 0))
     }
 
     pub(super) fn zero_initializable(&self, ty: Type, span: Span) -> Checked<bool> {
@@ -149,11 +172,26 @@ impl<'src> Checker<'_, 'src> {
         span: Span,
         assignment: Option<Assignment<'_, 'src>>,
     ) -> Checked<Expr> {
+        let slice = if let Some((_, readonly)) = self.types.slice_element(array.ty) {
+            if readonly && assignment.is_some() {
+                return Err(Diagnostic::new(
+                    "E0204",
+                    span,
+                    "slice elements are read-only",
+                ));
+            }
+            Some(SliceAccess {
+                readonly,
+                temporary: self.local(array.ty, array.span)?,
+            })
+        } else {
+            None
+        };
         let [argument] = arguments else {
             return Err(Diagnostic::new(
                 "E0205",
                 span,
-                "a CLR vector takes one index",
+                "an array or slice takes one index",
             ));
         };
         let index = self.expression(argument, Some(Type::I32))?;
@@ -161,7 +199,8 @@ impl<'src> Checker<'_, 'src> {
             if let Some(operator) = assignment.and_then(|assignment| assignment.operator) {
                 let (array_slot, array_load) = self.array_operand(array.ty, array.span)?;
                 let (index_slot, index_load) = self.array_operand(Type::I32, index.span)?;
-                let read = array_access(array_load(), index_load(), element, None, span);
+                let read =
+                    array_access_with_slice(array_load(), index_load(), element, None, slice, span);
                 let saved = vec![
                     Statement::Store {
                         target: Value::Local(array_slot),
@@ -181,7 +220,7 @@ impl<'src> Checker<'_, 'src> {
         let value = assignment
             .map(|assignment| self.assigned_value(assignment.value, previous, element))
             .transpose()?;
-        let access = array_access(array, index, element, value, span);
+        let access = array_access_with_slice(array, index, element, value, slice, span);
         if saved.is_empty() {
             return Ok(access);
         }
@@ -240,6 +279,17 @@ pub(super) fn array_access(
     value: Option<Expr>,
     span: Span,
 ) -> Expr {
+    array_access_with_slice(array, index, element, value, None, span)
+}
+
+fn array_access_with_slice(
+    array: Expr,
+    index: Expr,
+    element: Type,
+    value: Option<Expr>,
+    slice: Option<SliceAccess>,
+    span: Span,
+) -> Expr {
     let ty =
         if index.ty == Type::Never || value.as_ref().is_some_and(|value| value.ty == Type::Never) {
             Type::Never
@@ -254,6 +304,7 @@ pub(super) fn array_access(
             index,
             element,
             value,
+            slice,
         })),
         ty,
         span,
