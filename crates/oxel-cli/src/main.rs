@@ -147,15 +147,18 @@ fn cli(run: &mut Run) -> ExitCode {
         } else {
             (Path::new(manifest::DEFAULT), "oxel_editor")
         };
-        let resolution = if framework
-            && nuget.is_empty()
-            && matches!(
-                action,
-                Action::Check { .. } | Action::Lsp { .. } | Action::Test { list: true, .. }
-            ) {
-            sdk::probe_framework(path, name)
-                .ok()
-                .map(sdk::Resolution::Framework)
+        let resolution = if framework && nuget.is_empty() {
+            match action {
+                Action::Check { .. } | Action::Lsp { .. } | Action::Test { list: true, .. } => {
+                    sdk::probe_framework(path, name).ok()
+                }
+                Action::Compile | Action::Run | Action::Test { list: false, .. }
+                    if references.is_empty() =>
+                {
+                    sdk::installed_framework(path)
+                }
+                _ => None,
+            }
         } else {
             None
         };
@@ -389,17 +392,6 @@ fn execute(
         }
     }
 
-    if matches!(action, Action::Run | Action::Test { .. }) {
-        return run(
-            origin,
-            name,
-            &bytes,
-            &dependencies,
-            libraries,
-            format,
-            application,
-        );
-    }
     if matches!(action, Action::Publish) {
         return match aot::publish(directory, name, &bytes, &dependencies, libraries) {
             Ok(executable) => {
@@ -413,11 +405,28 @@ fn execute(
             ),
         };
     }
+    let framework = restored.and_then(sdk::Resolution::installed);
+    let output_kind = if matches!(action, Action::Test { .. }) {
+        AssemblyKind::Executable
+    } else {
+        kind
+    };
+    let output = Artifacts {
+        name,
+        bytes: &bytes,
+        dependencies: &dependencies,
+        libraries,
+        kind: output_kind,
+        framework,
+    };
+    if matches!(action, Action::Run | Action::Test { .. }) {
+        return run(origin, directory, &output, format, application);
+    }
     let mut artifacts = artifact_directory(directory);
-    if kind == AssemblyKind::Library {
+    if kind == AssemblyKind::Library && framework.is_none() {
         artifacts = artifacts.join("lib");
     }
-    match store_artifacts(&artifacts, name, &bytes, &dependencies, libraries, kind) {
+    match output.store(&artifacts) {
         Ok(dll) => {
             println!("{}", dll.display());
             ExitCode::SUCCESS
@@ -493,14 +502,19 @@ fn load_references(
 
 fn run(
     source: &Path,
-    name: &str,
-    bytes: &[u8],
-    dependencies: &[Dependency],
-    libraries: &[NativeLibrary],
+    directory: &Path,
+    output: &Artifacts<'_>,
     format: Format,
     application: &mut Run,
 ) -> ExitCode {
-    let folder = match tempfile::tempdir() {
+    let cache = (output.framework.is_some() && !output.libraries.is_empty())
+        .then(|| artifact_directory(directory).join("native-cache"));
+    let folder = match &cache {
+        Some(cache) => fs::create_dir_all(cache)
+            .and_then(|()| tempfile::TempDir::with_prefix_in(".run-", cache)),
+        None => tempfile::tempdir(),
+    };
+    let folder = match folder {
         Ok(folder) => folder,
         Err(err) => {
             return format.error(
@@ -510,14 +524,7 @@ fn run(
             );
         }
     };
-    let dll = match write_artifacts(
-        folder.path(),
-        name,
-        bytes,
-        dependencies,
-        libraries,
-        AssemblyKind::Executable,
-    ) {
+    let dll = match output.write(folder.path(), cache.as_deref()) {
         Ok(dll) => dll,
         Err(err) => {
             return format.error(source, "E0004", format!("could not write assembly: {err}"));
@@ -549,48 +556,59 @@ fn artifact_directory(project: &Path) -> PathBuf {
     project.join("target").join("oxel")
 }
 
-fn store_artifacts(
-    folder: &Path,
-    name: &str,
-    bytes: &[u8],
-    dependencies: &[Dependency],
-    libraries: &[NativeLibrary],
+struct Artifacts<'a> {
+    name: &'a str,
+    bytes: &'a [u8],
+    dependencies: &'a [Dependency],
+    libraries: &'a [NativeLibrary],
     kind: AssemblyKind,
-) -> io::Result<PathBuf> {
-    if libraries.is_empty() {
-        if dependencies.is_empty() {
-            return write_artifacts(folder, name, bytes, dependencies, libraries, kind);
-        }
-        let linked = folder
-            .join("linked")
-            .join(blake3::hash(bytes).to_hex().as_str());
-        return write_artifacts(&linked, name, bytes, dependencies, libraries, kind);
-    }
-    let linked = folder.join("linked");
-    fs::create_dir_all(&linked)?;
-    let stage = tempfile::TempDir::with_prefix_in(".compile-", &linked)?;
-    write_artifacts(stage.path(), name, bytes, dependencies, libraries, kind)?;
-    Ok(sdk::store_directory(&linked, stage.path())?.join(format!("{name}.dll")))
+    framework: Option<&'a sdk::InstalledFramework>,
 }
 
-fn write_artifacts(
-    folder: &Path,
-    name: &str,
-    bytes: &[u8],
-    dependencies: &[Dependency],
-    libraries: &[NativeLibrary],
-    kind: AssemblyKind,
-) -> io::Result<PathBuf> {
-    fs::create_dir_all(folder)?;
-    let dll = folder.join(format!("{name}.dll"));
-    write_dependencies(folder, dependencies)?;
-    if kind == AssemblyKind::Executable {
-        let config = folder.join(format!("{name}.runtimeconfig.json"));
-        write_file(&config, RUNTIME_CONFIG.as_bytes())?;
+impl Artifacts<'_> {
+    fn store(&self, folder: &Path) -> io::Result<PathBuf> {
+        if self.framework.is_none() && self.libraries.is_empty() {
+            if self.dependencies.is_empty() {
+                return self.write(folder, None);
+            }
+            let linked = folder
+                .join("linked")
+                .join(blake3::hash(self.bytes).to_hex().as_str());
+            return self.write(&linked, None);
+        }
+        let linked = folder.join("linked");
+        fs::create_dir_all(&linked)?;
+        let stage = tempfile::TempDir::with_prefix_in(".compile-", &linked)?;
+        let dll = self.write(stage.path(), None)?;
+        let name = dll.file_name().expect("assembly filename");
+        Ok(sdk::store_directory(&linked, stage.path())?.join(name))
     }
-    write_file(&dll, bytes)?;
-    copy_libraries(folder, libraries)?;
-    Ok(dll)
+
+    fn write(&self, folder: &Path, cache: Option<&Path>) -> io::Result<PathBuf> {
+        fs::create_dir_all(folder)?;
+        let name = self.name;
+        let dll = folder.join(format!("{name}.dll"));
+        write_dependencies(folder, self.dependencies)?;
+        if let Some(framework) = self.framework {
+            let deps = folder.join(format!("{name}.deps.json"));
+            write_file(&deps, framework.deps(name).as_bytes())?;
+        }
+        if self.kind == AssemblyKind::Executable {
+            let config = folder.join(format!("{name}.runtimeconfig.json"));
+            if let Some(framework) = self.framework {
+                write_file(&config, framework.runtime_config().as_bytes())?;
+            } else {
+                write_file(&config, RUNTIME_CONFIG.as_bytes())?;
+            }
+        }
+        write_file(&dll, self.bytes)?;
+        if let Some(cache) = cache {
+            native_assets::stage_cached_libraries(folder, cache, self.libraries)?;
+        } else {
+            copy_libraries(folder, self.libraries)?;
+        }
+        Ok(dll)
+    }
 }
 
 fn write_dependencies(folder: &Path, dependencies: &[Dependency]) -> io::Result<()> {

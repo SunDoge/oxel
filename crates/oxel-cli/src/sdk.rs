@@ -70,6 +70,7 @@ pub(super) struct SdkProject {
 }
 
 pub(super) enum Resolution {
+    Installed(InstalledFramework),
     Framework(Vec<PathBuf>),
     Project(SdkProject),
 }
@@ -78,7 +79,7 @@ impl Resolution {
     pub fn project(&self) -> Option<&SdkProject> {
         match self {
             Self::Project(project) => Some(project),
-            Self::Framework(_) => None,
+            _ => None,
         }
     }
 
@@ -86,23 +87,81 @@ impl Resolution {
         match self {
             Self::Project(project) => &project.framework_references,
             Self::Framework(references) => references,
+            Self::Installed(pack) => &pack.references,
+        }
+    }
+
+    pub fn installed(&self) -> Option<&InstalledFramework> {
+        match self {
+            Self::Installed(pack) => Some(pack),
+            _ => None,
         }
     }
 }
 
+pub(super) struct InstalledFramework {
+    framework: String,
+    runtime_version: String,
+    references: Vec<PathBuf>,
+}
+
+impl InstalledFramework {
+    pub fn runtime_config(&self) -> String {
+        serde_json::json!({
+            "runtimeOptions": {
+                "tfm": self.framework,
+                "framework": { "name": "Microsoft.NETCore.App", "version": self.runtime_version },
+                "configProperties": {
+                    "System.Reflection.Metadata.MetadataUpdater.IsSupported": false,
+                    "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false
+                }
+            }
+        })
+        .to_string()
+    }
+
+    pub fn deps(&self, name: &str) -> String {
+        let version = self
+            .framework
+            .strip_prefix("net")
+            .expect("validated target framework");
+        let target = format!(".NETCoreApp,Version=v{version}");
+        let package = format!("{name}/1.0.0");
+        let dll = format!("{name}.dll");
+        serde_json::json!({
+            "runtimeTarget": { "name": target, "signature": "" },
+            "compilationOptions": {},
+            "targets": { (target): { (package.as_str()): { "runtime": { (dll): {} } } } },
+            "libraries": { (package): { "type": "project", "serviceable": false, "sha512": "" } }
+        })
+        .to_string()
+    }
+}
+
+pub(super) fn installed_framework(manifest: &Path) -> Option<Resolution> {
+    let project = manifest::directory(manifest);
+    let project = std::path::absolute(if project.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        project
+    })
+    .ok()?;
+    framework::installed_references(&project).map(Resolution::Installed)
+}
+
 /// Resolves installed targeting packs through the selected SDK without restoring packages.
 /// The caller uses the normal restore path if the probe cannot resolve the framework.
-pub(super) fn probe_framework(manifest: &Path, name: &str) -> SdkResult<Vec<PathBuf>> {
+pub(super) fn probe_framework(manifest: &Path, name: &str) -> SdkResult<Resolution> {
+    if let Some(installed) = installed_framework(manifest) {
+        return Ok(installed);
+    }
     let project = manifest::directory(manifest);
     let project = std::path::absolute(if project.as_os_str().is_empty() {
         Path::new(".")
     } else {
         project
     })?;
-    if let Some(references) = framework::installed_references(&project) {
-        return Ok(references);
-    }
-    probe_framework_msbuild(&project, name)
+    probe_framework_msbuild(&project, name).map(Resolution::Framework)
 }
 
 fn probe_framework_msbuild(project: &Path, name: &str) -> SdkResult<Vec<PathBuf>> {

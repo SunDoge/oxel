@@ -7,9 +7,9 @@ use std::{
 
 use roxmltree::Document;
 
-use super::{artifact_directory, invoke, sdk_version};
+use super::{InstalledFramework, artifact_directory, invoke, sdk_version};
 
-pub(super) fn installed_references(project: &Path) -> Option<Vec<PathBuf>> {
+pub(super) fn installed_references(project: &Path) -> Option<InstalledFramework> {
     // Leave SDK policies, response files, and custom imports to MSBuild.
     let physical_project = fs::canonicalize(project).ok()?;
     let artifacts = artifact_directory(project);
@@ -59,8 +59,13 @@ pub(super) fn installed_references(project: &Path) -> Option<Vec<PathBuf>> {
     if exists_or_inaccessible(&sdk.join("MSBuild.rsp")) {
         return None;
     }
-    let pack = targeting_pack(&sdk, base.parent()?, &framework)?;
-    reference_files(&pack, &framework)
+    let (pack, runtime_version) = targeting_pack(&sdk, base.parent()?, &framework)?;
+    let references = reference_files(&pack, &framework)?;
+    Some(InstalledFramework {
+        framework,
+        runtime_version,
+        references,
+    })
 }
 
 fn exists_or_inaccessible(path: &Path) -> bool {
@@ -81,7 +86,7 @@ fn stable_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<PathBuf> {
+fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<(PathBuf, String)> {
     let props = fs::read_to_string(sdk.join("Microsoft.NETCoreSdk.BundledVersions.props")).ok()?;
     let doc = Document::parse(&props).ok()?;
     let mut matches = doc.descendants().filter(|node| {
@@ -102,7 +107,14 @@ fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<PathBuf> {
         return None;
     }
     let version = entry.attribute("TargetingPackVersion")?;
-    stable_version(version).then(|| root.join("packs/Microsoft.NETCore.App.Ref").join(version))
+    let runtime = entry.attribute("DefaultRuntimeFrameworkVersion")?;
+    if !stable_version(version) || !stable_version(runtime) {
+        return None;
+    }
+    Some((
+        root.join("packs/Microsoft.NETCore.App.Ref").join(version),
+        runtime.into(),
+    ))
 }
 
 fn reference_files(pack: &Path, framework: &str) -> Option<Vec<PathBuf>> {
@@ -167,15 +179,20 @@ mod tests {
             sdk.join("Microsoft.NETCoreSdk.BundledVersions.props"),
             r#"<Project><ItemGroup>
                 <KnownFrameworkReference Include="Microsoft.NETCore.App" TargetFramework="net7.0"
-                    TargetingPackName="Microsoft.NETCore.App.Ref" TargetingPackVersion="7.0.9" />
+                    TargetingPackName="Microsoft.NETCore.App.Ref" TargetingPackVersion="7.0.9"
+                    DefaultRuntimeFrameworkVersion="7.0.0" />
                 <KnownFrameworkReference Include="Microsoft.NETCore.App" TargetFramework="net8.0"
-                    TargetingPackName="Microsoft.NETCore.App.Ref" TargetingPackVersion="8.0.1" />
+                    TargetingPackName="Microsoft.NETCore.App.Ref" TargetingPackVersion="8.0.1"
+                    DefaultRuntimeFrameworkVersion="8.0.0" />
             </ItemGroup></Project>"#,
         )
         .unwrap();
         let pack = root.join("packs/Microsoft.NETCore.App.Ref/8.0.1");
         fs::create_dir_all(root.join("packs/Microsoft.NETCore.App.Ref/8.0.2")).unwrap();
-        assert_eq!(targeting_pack(&sdk, root, "net8.0"), Some(pack.clone()));
+        assert_eq!(
+            targeting_pack(&sdk, root, "net8.0"),
+            Some((pack.clone(), "8.0.0".into()))
+        );
         let data = pack.join("data");
         let references = pack.join("ref/net8.0");
         fs::create_dir_all(&data).unwrap();
@@ -209,7 +226,7 @@ mod tests {
         if let Some(references) = installed_references(project.path()) {
             let msbuild =
                 super::super::probe_framework_msbuild(project.path(), "comparison").unwrap();
-            assert_eq!(references, msbuild);
+            assert_eq!(references.references, msbuild);
         }
     }
 }

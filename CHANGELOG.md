@@ -9,6 +9,7 @@
 - Generate Oxel P/Invoke declarations from Rust C ABI exports with `oxel bindgen`, including C-layout structs and pointers annotated for `ref`, `out`, or UTF-8 strings.
 - Pass Rust batch buffers as Oxel arrays with automatic element counts, and bind Cdecl callbacks with explicit lifetime handles for retained callbacks.
 - Run an experimental Plico counter that sends keyed UI batches from Oxel to a Rust winit and wgpu desktop host.
+- Build and run framework-only projects directly from an installed targeting pack and reuse content-addressed native libraries during repeated runs.
 - Organize source files with explicit `namespace` declarations and import individual names or aliases with `use`. Library namespaces map to CLR namespaces.
 - The language includes CLR-compatible primitive types and generics, immutable bindings, value types with field updates and destructuring, discriminated unions, exhaustive matching, `Option` and `Result` propagation, typed CLR exception handlers, and `using` for scoped resources.
 - Use `as?` to check a CLR object's runtime type and get an `Option`. A null reference or mismatched type becomes `None`.

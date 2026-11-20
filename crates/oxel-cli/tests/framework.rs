@@ -949,6 +949,122 @@ fn framework_metadata_supports_io_collections_and_runtime_packaging() {
 
 #[cfg(unix)]
 #[test]
+fn framework_only_builds_use_installed_pack_without_msbuild() {
+    use std::{env, os::unix::fs::PermissionsExt};
+
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path().join("app");
+    let sdk = folder.path().join("sdk/10.0.100");
+    let pack = folder.path().join("packs/Microsoft.NETCore.App.Ref/10.0.2");
+    let tools = folder.path().join("tools");
+    for directory in [
+        &project,
+        &sdk,
+        &pack.join("ref/net10.0"),
+        &pack.join("data"),
+        &tools,
+    ] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(
+        sdk.join("Microsoft.NETCoreSdk.BundledVersions.props"),
+        r#"<Project><ItemGroup><KnownFrameworkReference Include="Microsoft.NETCore.App"
+            TargetFramework="net10.0" TargetingPackName="Microsoft.NETCore.App.Ref"
+            TargetingPackVersion="10.0.2" DefaultRuntimeFrameworkVersion="10.0.1" />
+            </ItemGroup></Project>"#,
+    )
+    .unwrap();
+    fs::write(
+        pack.join("data/FrameworkList.xml"),
+        r#"<FileList FrameworkName="Microsoft.NETCore.App" TargetFrameworkVersion="10.0">
+            <File Type="Managed" Path="ref/net10.0/System.Runtime.dll" />
+            </FileList>"#,
+    )
+    .unwrap();
+    fs::write(
+        pack.join("ref/net10.0/System.Runtime.dll"),
+        oxel::compile("fn main() {}", "mock_framework").unwrap(),
+    )
+    .unwrap();
+    fs::write(project.join("main.oxel"), "fn main() {}").unwrap();
+    fs::write(
+        project.join("oxel.toml"),
+        "[package]\nname = 'app'\nsources = ['main.oxel']\nframework = true\nnative_libraries = ['helper.so']",
+    ).unwrap();
+    let native = project.join("helper.so");
+    fs::write(&native, "first").unwrap();
+    let shim = tools.join("dotnet");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+printf '%s\n' "$1" >> "$OXEL_TEST_SDK_LOG"
+case "$1" in
+    --list-sdks) printf '10.0.100 [%s/sdk]\n' "$OXEL_TEST_SDK_ROOT" ;;
+    exec) cat "${2%/*}/helper.so" ;;
+    *) exit 1 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = env::var_os("PATH").unwrap();
+    let path = env::join_paths(std::iter::once(tools).chain(env::split_paths(&path))).unwrap();
+    let log = folder.path().join("calls.txt");
+    let invoke = |action| {
+        success(
+            Command::new(env!("CARGO_BIN_EXE_oxel"))
+                .current_dir(&project)
+                .env("PATH", &path)
+                .env("OXEL_TEST_SDK_ROOT", folder.path())
+                .env("OXEL_TEST_SDK_LOG", &log)
+                .arg(action)
+                .output()
+                .unwrap(),
+        )
+    };
+    let dll = project.join(invoke("compile").trim());
+    let config: serde_json::Value =
+        serde_json::from_slice(&fs::read(dll.with_extension("runtimeconfig.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["runtimeOptions"]["tfm"], "net10.0");
+    assert_eq!(config["runtimeOptions"]["framework"]["version"], "10.0.1");
+    let deps: serde_json::Value =
+        serde_json::from_slice(&fs::read(dll.with_extension("deps.json")).unwrap()).unwrap();
+    assert_eq!(
+        deps["targets"][".NETCoreApp,Version=v10.0"]["app/1.0.0"]["runtime"]["app.dll"],
+        serde_json::json!({})
+    );
+    assert_eq!(
+        fs::read_to_string(dll.with_file_name("helper.so")).unwrap(),
+        "first"
+    );
+    assert_eq!(invoke("run"), "first");
+    assert_eq!(invoke("run"), "first");
+    let cache = project.join("target/oxel/native-cache");
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
+    fs::write(&native, "later").unwrap();
+    assert_eq!(invoke("run"), "later");
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 2);
+    assert_eq!(
+        fs::read_to_string(dll.with_file_name("helper.so")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        fs::read_to_string(log).unwrap().lines().collect::<Vec<_>>(),
+        [
+            "--list-sdks",
+            "--list-sdks",
+            "exec",
+            "--list-sdks",
+            "exec",
+            "--list-sdks",
+            "exec"
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn framework_checks_probe_the_manifest_sdk_and_fall_back_to_restore() {
     use std::{env, os::unix::fs::PermissionsExt};
 
