@@ -64,17 +64,56 @@ impl CaptureScope<'_, '_> {
 }
 
 impl<'src> Checker<'_, 'src> {
+    fn delegate_definition(&self, ty: Type) -> Option<usize> {
+        self.types
+            .ancestor_id(ty.non_nullable())
+            .filter(|&id| self.references.imported_type(id).is_delegate)
+    }
+
+    pub(super) fn invoke_delegate(
+        &mut self,
+        receiver: Expr,
+        arguments: &[syntax::Expr<'src>],
+    ) -> Checked<(ExprKind, Type)> {
+        if receiver.ty == Type::Never {
+            return Ok((receiver.kind, Type::Never));
+        }
+        let span = receiver.span;
+        if self.delegate_definition(receiver.ty).is_none() {
+            let ty = describe_scoped(self.types, self.type_parameters, receiver.ty);
+            return Err(Diagnostic::new(
+                "E0205",
+                span,
+                format!("cannot call a value of type {ty}; expected a CLR delegate"),
+            ));
+        }
+        let binding_occurrence = self.occurrences.as_ref().and_then(|occurrences| {
+            let occurrence = occurrences.last()?;
+            (occurrence.span == span && occurrence.definition.is_some())
+                .then_some(occurrences.len() - 1)
+        });
+        let call = self.instance_call(receiver, "Invoke", span, &[], arguments)?;
+        if let (Some(index), Some(occurrences)) = (binding_occurrence, &mut self.occurrences)
+            && let Some(offset) = occurrences[index + 1..].iter().position(|occurrence| {
+                occurrence.span == span && occurrence.call_parameters.is_some()
+            })
+        {
+            // Attach signature help to this use of the binding and keep its definition.
+            let signature = occurrences.remove(index + 1 + offset);
+            occurrences[index].call_parameters = signature.call_parameters;
+            occurrences[index].detail = signature.detail;
+        }
+        Ok(call)
+    }
+
     pub(super) fn delegate_signature(
         &self,
         ty: Type,
         span: Span,
     ) -> Checked<Option<(usize, Signature)>> {
-        let Some(definition) = self.types.ancestor_id(ty.non_nullable()) else {
+        let Some(definition) = self.delegate_definition(ty) else {
             return Ok(None);
         };
-        if !self.references.imported_type(definition).is_delegate {
-            return Ok(None);
-        }
         let [invoke] = self.references.members(definition, "Invoke") else {
             return Ok(None);
         };

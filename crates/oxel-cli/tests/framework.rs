@@ -21,6 +21,73 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn invokes_clr_delegates_through_bindings_and_expressions() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let source = project.join("main.oxel");
+    fs::write(
+        &source,
+        include_str!("../../../examples/delegate_calls.oxel"),
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "30\n30\n30\n",
+    );
+    fs::write(
+        &source,
+        r#"
+        struct Controls { run: System.Func<i32, i32> }
+        fn run(input: i32) -> i32 { 0 }
+        fn load() -> System.Func<i32, i32> {
+            System.Console.WriteLine("load");
+            |input| { input + 10 }
+        }
+        fn input() -> i32 { System.Console.WriteLine("input"); 20 }
+        fn guarded(callback: System.Func<i32, i32>?) -> i32 {
+            if callback == null { return 0; }
+            callback(20)
+        }
+        fn main() {
+            let run = load();
+            let nested: System.Action = || { System.Console.WriteLine((run)(20)); };
+            nested();
+            System.Console.WriteLine(run(20));
+            let controls = Controls { run };
+            System.Console.WriteLine((controls.run)(20));
+            System.Console.WriteLine(guarded(run));
+            System.Console.WriteLine(guarded(null));
+            System.Console.WriteLine(load()(input()));
+        }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "load\n30\n0\n30\n30\n0\nload\ninput\n30\n",
+    );
+    for (body, code) in [
+        ("let value = 10; value();", "E0205"),
+        ("let callback: System.Action? = null; callback();", "E0311"),
+        ("let callback: System.Action; callback();", "E0321"),
+        (
+            "let callback: System.Action = || {}; callback(true);",
+            "E0205",
+        ),
+        (
+            "let callback: System.Action = || {}; callback::<i32>();",
+            "E0205",
+        ),
+    ] {
+        fs::write(&source, format!("fn main() {{ {body} }}")).unwrap();
+        let output = oxel(project, &["check", "--framework", "main.oxel"]);
+        assert!(!output.status.success(), "{body}");
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains(code), "{body}: {error}");
+    }
+}
+
+#[test]
 fn framework_null_guard_refines_its_argument_after_normal_return() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();

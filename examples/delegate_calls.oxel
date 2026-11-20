@@ -1,0 +1,15 @@
+fn apply(callback: System.Func<i32, i32>, input: i32) -> i32 {
+    callback(input)
+}
+
+fn offset(by: i32) -> System.Func<i32, i32> {
+    |input| { input + by }
+}
+
+fn main() {
+    let add_ten = offset(10);
+    System.Console.WriteLine(apply(add_ten, 20));
+    System.Console.WriteLine(offset(20)(10));
+    let callbacks = [add_ten];
+    System.Console.WriteLine(callbacks[0](20));
+}

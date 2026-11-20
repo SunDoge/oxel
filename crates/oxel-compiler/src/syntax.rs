@@ -931,6 +931,10 @@ pub(crate) enum Expression<'src> {
         type_arguments: Vec<Path<'src>>,
         arguments: Vec<Expr<'src>>,
     },
+    Invoke {
+        callee: Box<Expr<'src>>,
+        arguments: Vec<Expr<'src>>,
+    },
     Propagate(Box<Expr<'src>>, Span),
     Throw(Box<Expr<'src>>),
     Try(Block<'src>),
@@ -2054,6 +2058,27 @@ impl<'src> Parser<'src> {
             }
             if let Some(open) = self.take(LeftBracket) {
                 left = self.index_expression(left, open.span, depth)?;
+                continue;
+            }
+            if self.take(LeftParen).is_some() {
+                let arguments = self.call_arguments(depth + 1, allow_literal, left.span, None)?;
+                let tree_depth = 1 + arguments
+                    .iter()
+                    .map(|arg| arg.depth)
+                    .fold(left.depth, usize::max);
+                self.nesting(depth + tree_depth)?;
+                let span = Span {
+                    start: left.span.start,
+                    end: self.tokens[self.pos - 1].span.end,
+                };
+                left = Expr {
+                    kind: Expression::Invoke {
+                        callee: Box::new(left),
+                        arguments,
+                    },
+                    span,
+                    depth: tree_depth,
+                };
                 continue;
             }
             if self.take(Dot).is_none() {

@@ -2223,6 +2223,7 @@ fn trailing_lambdas_use_clr_delegates_and_capture_live_object_references() {
         namespace Callbacks;
 
         public delegate int Transform(int value);
+        public delegate void Fill(out int value);
 
         public struct State {
             public int Count;
@@ -2244,6 +2245,8 @@ fn trailing_lambdas_use_clr_delegates_and_capture_live_object_references() {
         }
 
         public static class Dispatch {
+            public static Fill Writer() => (out int value) => value = 30;
+
             public static void Run<T>(T value, Action<T> callback)
         #if NET9_0_OR_GREATER
                 where T : allows ref struct
@@ -2328,16 +2331,42 @@ fn trailing_lambdas_use_clr_delegates_and_capture_live_object_references() {
             System.Int32.TryParse("10", out number);
             Callbacks.Dispatch.Run(20) |delta| { number += delta; };
             System.Console.WriteLine(number);
+
+            let output: i32;
+            let fill = Callbacks.Dispatch.Writer();
+            fill(out output);
+            System.Console.WriteLine(output);
         }
         "#;
     assert_eq!(
         successful(cli("run", program)).lines().collect::<Vec<_>>(),
-        ["30", "35", "40", "19", "30"]
+        ["30", "35", "40", "19", "30", "30"]
     );
     let first = successful(cli("compile", program));
     let bytes = fs::read(cwd.join(first.trim())).unwrap();
     let second = successful(cli("compile", program));
     assert_eq!(bytes, fs::read(cwd.join(second.trim())).unwrap());
+
+    let mut references = oxel::References::default();
+    references.add(&fs::read(&reference).unwrap()).unwrap();
+    let editor_source = "fn apply(callback: Callbacks.Transform) -> i32 { callback(20) }";
+    let analysis = &oxel::inspect_project(&[editor_source], &references)[0];
+    assert!(
+        analysis.diagnostics.is_empty(),
+        "{:?}",
+        analysis.diagnostics
+    );
+    let call = analysis
+        .occurrences
+        .iter()
+        .find(|item| item.span.start == editor_source.rfind("callback").unwrap())
+        .unwrap();
+    assert_eq!(call.kind, oxel::OccurrenceKind::Parameter);
+    assert_eq!(
+        call.definition.unwrap().start,
+        editor_source.find("callback").unwrap()
+    );
+    assert_eq!(call.call_parameters.as_ref().unwrap().ranges.len(), 1);
 
     for (body, code, message) in [
         ("button.OnClick() |first| {};", "E0340", "parameter count"),

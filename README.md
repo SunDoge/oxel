@@ -570,6 +570,8 @@ Capturing a `let mut` binding gives the declaring scope and all its callbacks sh
 
 Constructed delegates such as `System.Action<i32>` also work. For a generic CLR method such as `System.Array.ForEach`, the ordinary arguments can determine the method type arguments before oxel checks the lambda. Supply explicit method type arguments when the ordinary arguments leave them open. [Generic callback example](examples/generic_callbacks.oxel) · [CLR generic parameter flags](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.genericparameterattributes)
 
+Call a CLR delegate with `callback(value)` or `make_callback()(value)`. Use `(button.Callback)(value)` for a delegate stored in a field or property, and `(callback)(value)` when a named function shares the binding's name. Oxel checks the arguments against the delegate's `Invoke` method. Check a nullable delegate before calling it. Try `oxel run --framework examples/delegate_calls.oxel`. [Runnable example](examples/delegate_calls.oxel)
+
 ### CLR events
 
 Use `+=` to subscribe a delegate to a public CLR event and `-=` to unsubscribe it. A lambda can appear directly on the right-hand side, or be stored in a binding annotated with its delegate type. Keep the delegate in a binding when you need to unsubscribe it later.

@@ -4109,6 +4109,10 @@ impl<'a, 'src> Checker<'a, 'src> {
                 type_arguments,
                 arguments,
             } => self.call(path, type_arguments, arguments, expected)?,
+            Expression::Invoke { callee, arguments } => {
+                let receiver = self.expression(callee, None)?;
+                self.invoke_delegate(receiver, arguments)?
+            }
             Expression::Unary(op, operand) => {
                 let hint = match op {
                     Unary::Not => Some(Type::Bool),
@@ -4625,13 +4629,33 @@ impl<'a, 'src> Checker<'a, 'src> {
         }
         // Remember unsuccessful name lookups as well. A later declaration
         // can turn an unknown unqualified call into a valid local call.
-        if let [(name, _)] = path.segments.as_slice()
-            && let Some(lookups) = &mut self.lookups
-        {
-            lookups.push(Lookup::Function(name));
+        let mut named_function = None;
+        if let [(name, span)] = path.segments.as_slice() {
+            if let Some(lookups) = &mut self.lookups {
+                lookups.push(Lookup::Function(name));
+            }
+            named_function = self.names.get(name).copied();
+            if *name != "assert"
+                && named_function.is_none()
+                && let Some(binding) = self.binding(name, *span)
+            {
+                if !type_arguments.is_empty() {
+                    return Err(Diagnostic::new(
+                        "E0205",
+                        *span,
+                        "a delegate call cannot supply method type arguments",
+                    ));
+                }
+                let receiver = Expr {
+                    kind: ExprKind::Load(binding.value),
+                    ty: binding.ty,
+                    span: *span,
+                };
+                return self.invoke_delegate(receiver, args);
+            }
         }
         let (target, args, result) = match path.segments.as_slice() {
-            [("assert", _)] if !self.names.contains_key("assert") => {
+            [("assert", _)] if named_function.is_none() => {
                 return self.assertion(path.span, type_arguments, args);
             }
             [("System", _), ("Console", _), ("WriteLine", _)] => {
@@ -4693,8 +4717,8 @@ impl<'a, 'src> Checker<'a, 'src> {
                 }
                 (Target::WriteLine(overload), typed, Type::Void)
             }
-            [(name, span)] if self.names.contains_key(name) => {
-                let index = self.names[name];
+            [(name, span)] if named_function.is_some() => {
+                let index = named_function.expect("named function");
                 let signature = &self.signatures[index];
                 let declaration = &self.functions[index];
                 if declaration.test.is_some() && !self.in_test {
