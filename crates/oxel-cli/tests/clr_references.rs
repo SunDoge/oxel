@@ -2225,14 +2225,14 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         r#"
         fn forward(number: i32, word: string?) -> i32 {
             if word != null {
-                ByRef.Api.ReadOnly(in number) + ByRef.Api.MaybeLength(in word)
+                ByRef.Api.ReadOnly(&number) + ByRef.Api.MaybeLength(&word)
             } else {
                 ByRef.Api.MaybeLength(in word)
             }
         }
 
         fn echo<T>(value: T) -> T {
-            ByRef.Api.Echo(in value)
+            ByRef.Api.Echo(&value)
         }
 
         fn main() {
@@ -2240,7 +2240,7 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             let reader = new ByRef.Reader(out code);
             let mut count = code;
             System.Console.WriteLine(reader.Pick(30));
-            System.Console.WriteLine(reader.Pick(ref count));
+            System.Console.WriteLine(reader.Pick(&mut count));
             System.Console.WriteLine(count);
 
             let cursor = new ByRef.Cursor(29);
@@ -2259,8 +2259,8 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             System.Console.WriteLine(empty ?? "empty");
 
             System.Console.WriteLine(ByRef.Api.ReadOnly(in number));
-            System.Console.WriteLine(ByRef.Api.Pick(count));
-            System.Console.WriteLine(ByRef.Api.Pick(in count));
+            System.Console.WriteLine(ByRef.Api.Pick(count & 15));
+            System.Console.WriteLine(ByRef.Api.Pick(&count));
             let word = "hello";
             System.Console.WriteLine(ByRef.Api.Length(in word));
             System.Console.WriteLine(ByRef.Api.Location(in number));
@@ -2268,11 +2268,11 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             let base_reader: ByRef.Base = reader;
             let interface_reader: ByRef.IRead = reader;
             let scale = 2;
-            System.Console.WriteLine(base_reader.Read(in number, 2, in scale));
+            System.Console.WriteLine(base_reader.Read(&number, 2, &scale));
             System.Console.WriteLine(interface_reader.Read(in number, 3, in scale));
             System.Console.WriteLine(interface_reader.ReadLocation(in number));
             let callback = ByRef.Api.GetDelegate();
-            System.Console.WriteLine(callback(in number));
+            System.Console.WriteLine(callback(&number));
             System.Console.WriteLine(forward(number, word));
             System.Console.WriteLine(echo(number));
             System.Console.WriteLine(ByRef.Api.Apply(number) |value| { ByRef.Api.ReadOnly(in value) });
@@ -2300,8 +2300,11 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         ("let x: string; ByRef.Api.Next(out x);", "E0213"),
         ("let mut x = 1; ByRef.Api.ReadOnly(ref x);", "E0213"),
         ("let x = 1; ByRef.Api.ReadOnly(x);", "E0213"),
-        ("let x: i32; ByRef.Api.ReadOnly(in x);", "E0321"),
-        ("let x: i64 = 1; ByRef.Api.ReadOnly(in x);", "E0205"),
+        ("let x: i32; ByRef.Api.ReadOnly(&x);", "E0321"),
+        ("let x: i64 = 1; ByRef.Api.ReadOnly(&x);", "E0205"),
+        ("let x: string? = null; ByRef.Api.Clear(&mut x);", "E0204"),
+        ("let mut x = 1; ByRef.Api.ReadOnly(&mut x);", "E0213"),
+        ("let x = 1; ByRef.Api.Set(&mut x);", "E0213"),
         ("let x: string? = null; ByRef.Api.Length(in x);", "E0205"),
         ("let mut x = 1; ByRef.Api.Location(ref x);", "E0213"),
         ("let x = 1; ByRef.Api.InputFlag(in x);", "E0203"),

@@ -136,7 +136,7 @@ fn native_reference_arguments_use_mode_mutability_and_assignment_checks() {
         assert!(errors[0].message.contains(message), "{errors:?}");
     }
     let valid = format!(
-        "{imports} fn main() {{ let n: i32; produce(out n, 1); let mut copy = n; update(ref copy); }}"
+        "{imports} fn main() {{ let n: i32; produce(out n, 1); let mut copy = n; update(&mut copy); }}"
     );
     oxel::compile(&valid, "valid").unwrap();
 }

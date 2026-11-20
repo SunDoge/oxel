@@ -2361,10 +2361,21 @@ impl<'src> Parser<'src> {
     }
 
     fn call_argument(&mut self, depth: usize) -> Parsed<Expr<'src>> {
-        if let Some((passing, token)) = self.take_parameter_prefix(false) {
+        let reference = if let Some(ampersand) = self.take(Ampersand) {
+            let mode = if self.take(Mut).is_some() {
+                ArgumentMode::Ref
+            } else {
+                ArgumentMode::In
+            };
+            Some((mode, ampersand))
+        } else {
+            self.take_parameter_prefix(false)
+                .map(|(passing, token)| (passing.mode(), token))
+        };
+        if let Some((mode, token)) = reference {
             let (name, span) = self.name()?;
             return Ok(Expr {
-                kind: Expression::ByRef(passing.mode(), name, span),
+                kind: Expression::ByRef(mode, name, span),
                 span: Span {
                     start: token.span.start,
                     end: span.end,
