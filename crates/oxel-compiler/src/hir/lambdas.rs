@@ -153,6 +153,29 @@ impl<'src> Checker<'_, 'src> {
         if self.types.stack_only(signature.result) {
             return Err(stack_only_error(span, "a lambda return type"));
         }
+        let body_result = if source.async_fn {
+            if signature.result != Type::Void
+                && !asynchronous::is_task_like(self.types, signature.result)
+            {
+                return Err(asynchronous::error(
+                    span,
+                    "an async lambda requires a delegate returning Task, ValueTask, or void",
+                ));
+            }
+            if signature
+                .parameters
+                .iter()
+                .any(|&ty| self.types.stack_only(ty))
+            {
+                return Err(asynchronous::error(
+                    span,
+                    "an async lambda parameter cannot be a stack-only span",
+                ));
+            }
+            asynchronous::output(self.types, signature.result)
+        } else {
+            signature.result
+        };
         if source.parameters.len() != signature.parameters.len()
             || source.parameters.len() >= usize::from(u16::MAX)
         {
@@ -170,7 +193,7 @@ impl<'src> Checker<'_, 'src> {
         let capture = &mut self.capture;
         let mut outer = |name: &str, span| capture.as_mut()?.binding(name, span);
         let mut nested = Checker {
-            async_fn: false,
+            async_fn: source.async_fn,
             in_test: self.in_test,
             comptime: false,
             names: self.names,
@@ -179,7 +202,7 @@ impl<'src> Checker<'_, 'src> {
             constants: self.constants,
             references: self.references,
             types: self.types,
-            result: signature.result,
+            result: body_result,
             type_parameters: self.type_parameters,
             bounds: self.bounds,
             scopes: vec![Scope::Empty],
@@ -236,7 +259,7 @@ impl<'src> Checker<'_, 'src> {
                 ));
             }
         }
-        let body = nested.block(&source.body, Some(signature.result))?;
+        let body = nested.block(&source.body, Some(body_result))?;
         let captures = nested.capture.take().expect("active capture scope");
         for capture in &captures.uses {
             let ty = match capture.kind {
@@ -253,6 +276,11 @@ impl<'src> Checker<'_, 'src> {
         }
         let has_exception_regions = nested.has_exception_regions;
         let locals = nested.locals;
+        let body = if source.async_fn {
+            asynchronous::body(self.types, body, &locals, signature.result, span)?
+        } else {
+            MethodBody::Managed(body)
+        };
         let lambdas = nested.lambdas;
         let captured_cells = nested.captured_cells;
         let environment_type = self.types.array(Type::NullableObject, span)?;
@@ -288,7 +316,7 @@ impl<'src> Checker<'_, 'src> {
             type_parameters: self.type_parameters.iter().map(|&(name, _)| name).collect(),
             locals,
             captured_cells,
-            body: super::MethodBody::Managed(body),
+            body,
             lambdas,
         });
         Ok((

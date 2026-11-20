@@ -593,13 +593,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
                 unreachable!("type queries are evaluated at compile time")
             }
             ExprKind::Interpolation(parts) => self.interpolation(parts, base),
-            ExprKind::Load(Value::Parameter(index)) => {
-                if let Some(state) = &self.async_state {
-                    self.indexed(0x11, 0x0c, state.parameter(*index)); // ldloc
-                } else {
-                    self.indexed(0x0e, 0x09, *index); // ldarg
-                }
-            }
+            ExprKind::Load(Value::Parameter(index)) => self.load_parameter(*index),
             ExprKind::Load(value @ (Value::Local(_) | Value::CapturedCell(..))) => {
                 if let Some(element) = self.cell_element(*value) {
                     self.cell_index(*value, element, base);
@@ -1004,6 +998,10 @@ impl<'a, 'refs> Body<'a, 'refs> {
     }
 
     fn try_catch(&mut self, region: &ExceptionRegion, ty: Type, base: usize) {
+        if self.async_state.is_some() {
+            self.async_try_catch(region, ty, base);
+            return;
+        }
         let pending = self.begin_region(base);
 
         // Branches to this expression land outside the protected region.
@@ -1336,9 +1334,19 @@ impl<'a, 'refs> Body<'a, 'refs> {
 
     fn captured_object(&mut self, slot: usize, base: usize) {
         self.max_stack = self.max_stack.max(base + 2);
-        self.op(0x02); // ldarg.0
+        self.load_parameter(0);
         self.load_i32(slot as i32);
         self.op(0x9a); // ldelem.ref
+    }
+
+    fn load_parameter(&mut self, index: u16) {
+        if let Some(state) = &self.async_state {
+            self.indexed(0x11, 0x0c, state.parameter(index)); // ldloc
+        } else if index == 0 {
+            self.op(0x02); // ldarg.0
+        } else {
+            self.indexed(0x0e, 0x09, index); // ldarg
+        }
     }
 
     fn cell_element(&self, value: Value) -> Option<Type> {

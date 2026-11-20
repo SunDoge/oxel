@@ -4,8 +4,8 @@ use super::{BASE_EXCEPTION, Body, ExceptionClause, StackSlot};
 use crate::{
     Diagnostic,
     hir::{
-        Block, Expr, Member, Type,
-        asynchronous::{Plan, Suspension},
+        Block, ExceptionRegion, Expr, Member, Type,
+        asynchronous::{Completion, Plan, Suspension},
     },
 };
 
@@ -17,6 +17,7 @@ const PARAMETERS: usize = 3;
 pub(super) struct State {
     plan: Plan,
     first_parameter: u16,
+    resume_state: u16,
     locals_start: usize,
     scratch_start: usize,
     scratch_size: usize,
@@ -45,20 +46,22 @@ impl Body<'_, '_> {
         self.indexed(0x13, 0x0e, frame); // stloc
         let first_parameter = frame.saturating_add(1);
         let locals_start = PARAMETERS + parameters.len();
+        let protected_start = self.code.len();
+        for (index, &ty) in parameters.iter().enumerate() {
+            let parameter = self.reserve_spill(StackSlot::Value(ty));
+            self.restore_async_local(PARAMETERS + index, parameter, StackSlot::Value(ty));
+        }
+        let resume_state = self.reserve_spill(StackSlot::Value(Type::I32));
         self.async_state = Some(State {
             plan,
             first_parameter,
+            resume_state,
             locals_start,
             scratch_start: locals_start + self.locals.len(),
             scratch_size: 0,
             resumes: Vec::new(),
             failure: None,
         });
-        let protected_start = self.code.len();
-        for (index, &ty) in parameters.iter().enumerate() {
-            let parameter = self.reserve_spill(StackSlot::Value(ty));
-            self.restore_async_local(PARAMETERS + index, parameter, StackSlot::Value(ty));
-        }
         let dispatch = self.branch(0x38); // br
         let start = self.code.len();
         self.block(block, 0);
@@ -68,7 +71,8 @@ impl Body<'_, '_> {
 
         self.patch(dispatch);
         self.load_async_slot(STATE, StackSlot::Value(Type::I32));
-        self.op(0x25); // dup
+        self.indexed(0x13, 0x0e, resume_state); // stloc
+        self.indexed(0x11, 0x0c, resume_state); // ldloc
         let first_call = self.branch(0x39); // brfalse
         for index in 0..self.locals.len() {
             self.restore_async_local(
@@ -82,14 +86,10 @@ impl Body<'_, '_> {
         if let Some(error) = state.failure {
             return Err(error);
         }
-        self.op(0x45); // switch
-        self.code
-            .extend_from_slice(&((state.resumes.len() + 1) as u32).to_le_bytes());
-        let table_end = self.code.len() + (state.resumes.len() + 1) * 4;
-        for target in std::iter::once(start).chain(state.resumes) {
-            self.code
-                .extend_from_slice(&((target as i64 - table_end as i64) as i32).to_le_bytes());
-        }
+        self.indexed(0x11, 0x0c, resume_state); // ldloc
+        let mut targets = vec![start];
+        targets.extend(state.resumes);
+        self.async_switch(&targets);
         // A CLR awaiter schedules exactly one continuation for each registration.
         // An invalid state must still leave the protected region with an empty stack.
         let invalid = self.branch(0xdd); // leave
@@ -97,33 +97,35 @@ impl Body<'_, '_> {
         let protected_end = self.code.len();
 
         let exception = self.reserve_spill(StackSlot::Value(Type::Object));
-        let cancellation = self.reserve_spill(StackSlot::Value(plan.cancellation));
-        let canceled = self.code.len();
-        self.indexed(0x13, 0x0e, cancellation); // stloc
-        self.load_async_slot(COMPLETION, StackSlot::Value(plan.completion));
-        self.indexed(0x11, 0x0c, cancellation); // ldloc
-        self.async_call(plan.cancellation_token, true);
-        self.async_call(plan.set_canceled, true);
-        let leave = self.branch(0xdd);
-        self.return_jumps.push(leave);
-        let canceled_end = self.code.len();
-        let cancellation_type = self.metadata.runtime_type_token(plan.cancellation);
-        self.clauses.push(ExceptionClause {
-            protected: protected_start..protected_end,
-            handler: canceled..canceled_end,
-            class: Some(cancellation_type),
-        });
+        if let Completion::Task { canceled, .. } = plan.completion {
+            let cancellation = self.reserve_spill(StackSlot::Value(canceled.exception));
+            let start = self.code.len();
+            self.indexed(0x13, 0x0e, cancellation); // stloc
+            self.load_completion(plan);
+            self.indexed(0x11, 0x0c, cancellation); // ldloc
+            self.async_call(canceled.token, true);
+            self.async_call(canceled.complete, true);
+            let leave = self.branch(0xdd);
+            self.return_jumps.push(leave);
+            let cancellation_type = self.metadata.runtime_type_token(canceled.exception);
+            self.clauses.push(ExceptionClause {
+                protected: protected_start..protected_end,
+                handler: start..self.code.len(),
+                class: Some(cancellation_type),
+            });
+        }
 
+        let failed = self.code.len();
         self.indexed(0x13, 0x0e, exception); // stloc
-        self.load_async_slot(COMPLETION, StackSlot::Value(plan.completion));
+        self.load_completion(plan);
         self.indexed(0x11, 0x0c, exception); // ldloc
         self.token_instruction(0x74, BASE_EXCEPTION); // castclass
-        self.async_call(plan.set_exception, true);
+        self.async_call(plan.set_exception, plan.completion_type.reference());
         let leave = self.branch(0xdd);
         self.return_jumps.push(leave);
         self.clauses.push(ExceptionClause {
             protected: protected_start..protected_end,
-            handler: canceled_end..self.code.len(),
+            handler: failed..self.code.len(),
             class: Some(BASE_EXCEPTION),
         });
         for jump in std::mem::take(&mut self.return_jumps) {
@@ -152,10 +154,13 @@ impl Body<'_, '_> {
         self.box_async(Type::I32);
         self.op(0xa2); // stelem.ref
         self.frame_slot(frame, COMPLETION);
-        let (_, ctor) = self
-            .metadata
-            .member(plan.constructor.id, plan.constructor.owner);
-        self.token_instruction(0x73, super::MEMBER_REF | ctor); // newobj
+        match plan.completion {
+            Completion::Task { constructor, .. } => self.new_async_object(constructor),
+            Completion::Void { create } => {
+                self.async_call(create, false);
+                self.box_async(plan.completion_type);
+            }
+        }
         self.op(0xa2); // stelem.ref
         self.frame_slot(frame, CONTINUATION);
         self.indexed(0x11, 0x0c, frame);
@@ -194,22 +199,48 @@ impl Body<'_, '_> {
         self.indexed(0x11, 0x0c, frame);
         self.call(step);
         self.patch(started);
-        self.frame_slot(frame, COMPLETION);
-        self.op(0x9a); // ldelem.ref
-        let completion = self.metadata.runtime_type_token(plan.completion);
-        self.token_instruction(0x74, completion); // castclass
-        self.async_call(plan.get_task, true);
+        if let Completion::Task { get_task, wrap, .. } = plan.completion {
+            self.frame_slot(frame, COMPLETION);
+            self.op(0x9a); // ldelem.ref
+            let completion = self.metadata.runtime_type_token(plan.completion_type);
+            self.token_instruction(0x74, completion); // castclass
+            self.async_call(get_task, true);
+            if let Some(wrap) = wrap {
+                self.new_async_object(wrap);
+            }
+        }
         self.op(0x2a); // ret
     }
 
     pub(super) fn suspend(&mut self, await_: &Suspension, base: usize) {
+        if self.spill_overflow {
+            return;
+        }
         let pending = self.pending.clone();
-        if pending.len() != base
-            || pending.iter().any(|&slot| match slot {
-                StackSlot::Address(_) => true,
-                StackSlot::Value(ty) => self.metadata.stack_only(ty),
-                StackSlot::Vector(_) => false,
+        // A try region has already moved its enclosing operands into locals.
+        // Keep those values alive even though its evaluation stack is empty.
+        let mut region_locals: Vec<_> = self
+            .region_spills
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|&local| {
+                (
+                    local,
+                    self.spill_locals[usize::from(local) - self.locals.len()],
+                )
             })
+            .collect();
+        if pending.len() != base
+            || pending
+                .iter()
+                .copied()
+                .chain(region_locals.iter().map(|&(_, slot)| slot))
+                .any(|slot| match slot {
+                    StackSlot::Address(_) => true,
+                    StackSlot::Value(ty) => self.metadata.stack_only(ty),
+                    StackSlot::Vector(_) => false,
+                })
         {
             let state = self.async_state.as_mut().expect("checked async suspension");
             state.failure.get_or_insert_with(|| Diagnostic::new(
@@ -227,6 +258,12 @@ impl Body<'_, '_> {
             .map(|&slot| self.spill(slot))
             .collect::<Vec<_>>();
         spills.reverse();
+        region_locals.extend(
+            spills
+                .iter()
+                .zip(&pending)
+                .filter_map(|(&local, &slot)| local.map(|local| (local, slot))),
+        );
 
         self.indexed(0x12, 0x0d, awaiter); // ldloca
         self.async_call(await_.completed, false);
@@ -243,10 +280,8 @@ impl Body<'_, '_> {
             );
         }
         self.save_async_local(scratch_start, awaiter, awaiter_type);
-        for (index, (&slot, &local)) in pending.iter().zip(&spills).enumerate() {
-            if let Some(local) = local {
-                self.save_async_local(scratch_start + 1 + index, local, slot);
-            }
+        for (index, &(local, slot)) in region_locals.iter().enumerate() {
+            self.save_async_local(scratch_start + 1 + index, local, slot);
         }
         self.load_frame_slot(STATE);
         self.load_i32(state as i32);
@@ -260,17 +295,93 @@ impl Body<'_, '_> {
 
         let state = self.async_state.as_mut().expect("active suspension");
         state.resumes.push(self.code.len());
-        state.scratch_size = state.scratch_size.max(1 + spills.len());
+        state.scratch_size = state.scratch_size.max(1 + region_locals.len());
+        let resume_state = state.resume_state;
         self.restore_async_local(scratch_start, awaiter, awaiter_type);
-        for (index, (&slot, &local)) in pending.iter().zip(&spills).enumerate() {
-            if let Some(local) = local {
-                self.restore_async_local(scratch_start + 1 + index, local, slot);
-            }
+        for (index, (local, slot)) in region_locals.into_iter().enumerate() {
+            self.restore_async_local(scratch_start + 1 + index, local, slot);
         }
+        self.op(0x16); // ldc.i4.0, later regions use their normal entry
+        self.indexed(0x13, 0x0e, resume_state); // stloc
         self.patch(ready);
         self.reload_operands(spills);
         self.indexed(0x12, 0x0d, awaiter);
         self.async_call(await_.result, false);
+    }
+
+    pub(super) fn async_try_catch(&mut self, region: &ExceptionRegion, ty: Type, base: usize) {
+        let pending = self.begin_region(base);
+        let entry = self.code.len();
+        self.op(0x00); // resume dispatch reaches this point outside the protected body
+        let start = self.code.len();
+        let dispatch = self.branch(0x38); // br inside the protected region
+        let body_start = self.code.len();
+        let first_resume = self.async_state.as_ref().expect("async try").resumes.len();
+        let mut ends = Vec::new();
+        self.block(&region.body, 0);
+        if region.body.ty != Type::Never {
+            ends.push(self.leave_exception_region(region.result, ty));
+        }
+
+        let state = self.async_state.as_mut().expect("async try");
+        let resumes = &mut state.resumes[first_resume..];
+        if resumes.is_empty() {
+            self.patch_to(dispatch, body_start);
+        } else {
+            // Each outer dispatcher targets the region entrance, then the
+            // dispatcher inside the region can reach its own resume addresses.
+            let targets = resumes.to_vec();
+            resumes.fill(entry);
+            let resume_state = state.resume_state;
+            self.patch(dispatch);
+            self.indexed(0x11, 0x0c, resume_state); // ldloc
+            self.load_i32((first_resume + 1) as i32);
+            self.op(0x59); // sub
+            self.async_switch(&targets);
+            let normal = self.branch(0x38);
+            self.patch_to(normal, body_start);
+        }
+
+        let protected = start..self.code.len();
+        let mut handlers = Vec::with_capacity(region.catches.len());
+        for arm in &region.catches {
+            let start = self.code.len();
+            if let Some(local) = arm.local {
+                self.indexed(0x13, 0x0e, local); // stloc the thrown exception
+            } else {
+                self.op(0x26); // pop
+            }
+            handlers.push(self.branch(0xdd)); // leave
+            let class = arm
+                .ty
+                .map_or(BASE_EXCEPTION, |ty| self.metadata.runtime_type_token(ty));
+            self.clauses.push(ExceptionClause {
+                protected: protected.clone(),
+                handler: start..self.code.len(),
+                class: Some(class),
+            });
+        }
+        // Run the source catch blocks outside the CLR handlers so an await
+        // can resume there, and a new exception only reaches enclosing catches.
+        for (arm, handler) in region.catches.iter().zip(handlers) {
+            self.patch(handler);
+            self.block(&arm.body, 0);
+            if arm.body.ty != Type::Never {
+                ends.push(self.leave_exception_region(region.result, ty));
+            }
+        }
+        self.end_region(pending, ends, region.result, ty);
+    }
+
+    fn async_switch(&mut self, targets: &[usize]) {
+        self.op(0x45); // switch
+        self.code
+            .extend_from_slice(&(targets.len() as u32).to_le_bytes());
+        let end = self.code.len() + targets.len() * 4;
+        for &target in targets {
+            self.code
+                .extend_from_slice(&((target as i64 - end as i64) as i32).to_le_bytes());
+        }
     }
 
     pub(super) fn async_return(&mut self, value: Option<&Expr>, base: usize) {
@@ -297,11 +408,11 @@ impl Body<'_, '_> {
             self.spill(StackSlot::Value(plan.output))
                 .expect("typed async result")
         });
-        self.load_async_slot(COMPLETION, StackSlot::Value(plan.completion));
+        self.load_completion(plan);
         if let Some(result) = result {
             self.indexed(0x11, 0x0c, result);
         }
-        self.async_call(plan.set_result, true);
+        self.async_call(plan.set_result, plan.completion_type.reference());
         let leave = self.branch(0xdd);
         self.return_jumps.push(leave);
     }
@@ -312,6 +423,23 @@ impl Body<'_, '_> {
             if reference_receiver { 0x6f } else { 0x28 },
             super::MEMBER_REF | row,
         );
+    }
+
+    fn new_async_object(&mut self, constructor: Member) {
+        let (_, row) = self.metadata.member(constructor.id, constructor.owner);
+        self.token_instruction(0x73, super::MEMBER_REF | row); // newobj
+    }
+
+    fn load_completion(&mut self, plan: Plan) {
+        if plan.completion_type.reference() {
+            self.load_async_slot(COMPLETION, StackSlot::Value(plan.completion_type));
+        } else {
+            // Mutate the same boxed builder that captured the synchronization context.
+            self.load_frame_slot(COMPLETION);
+            self.op(0x9a); // ldelem.ref
+            let builder = self.metadata.runtime_type_token(plan.completion_type);
+            self.token_instruction(0x79, builder); // unbox
+        }
     }
 
     fn frame_slot(&mut self, frame: u16, index: usize) {

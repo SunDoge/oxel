@@ -2002,21 +2002,13 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
                     assignment::validate(&body, &checker.uninitialized)?;
                 }
                 if function.async_fn {
-                    if checker.has_exception_regions {
-                        return Err(asynchronous::error(
-                            function.name_span,
-                            "async functions currently require a body without 'catch' or 'using'",
-                        ));
-                    }
-                    if checker.locals.iter().any(|&ty| types.stack_only(ty)) {
-                        return Err(asynchronous::error(
-                            function.name_span,
-                            "async functions cannot store stack-only spans",
-                        ));
-                    }
-                    let plan =
-                        asynchronous::Plan::resolve(types, checker.result, function.name_span)?;
-                    MethodBody::Async(body, Box::new(plan))
+                    asynchronous::body(
+                        types,
+                        body,
+                        &checker.locals,
+                        signature.result,
+                        function.name_span,
+                    )?
                 } else {
                     MethodBody::Managed(body)
                 }
@@ -4466,6 +4458,12 @@ impl<'a, 'src> Checker<'a, 'src> {
         dispose: Member,
         span: Span,
     ) -> Checked<(ExprKind, Type)> {
+        if self.async_fn {
+            return Err(asynchronous::error(
+                span,
+                "resource cleanup with 'using' or CLR enumeration is not yet supported in async bodies",
+            ));
+        }
         let dispose = local_interface_call(local, resource.ty, dispose, Type::Void, span);
         let ty = body.ty;
         let result = self.exception_result(ty, span)?;
@@ -5514,7 +5512,7 @@ impl<'a, 'src> Checker<'a, 'src> {
         // The ordinary arguments determine method type arguments before the
         // delegate signature is used to check the lambda body.
         let trailing = args.last().and_then(|argument| match &argument.kind {
-            Expression::Lambda(lambda) => Some((argument, lambda.parameters.len())),
+            Expression::Lambda(lambda) => Some((argument, lambda)),
             _ => None,
         });
         let positional = &args[..args.len() - usize::from(trailing.is_some())];
@@ -5604,7 +5602,7 @@ impl<'a, 'src> Checker<'a, 'src> {
             .map(|value| value.expect("all arguments checked"))
             .collect();
         let mut best = Vec::new();
-        let mut best_cost = (usize::MAX, usize::MAX);
+        let mut best_cost = (usize::MAX, usize::MAX, true);
         let mut normal_member = None;
         let mut failed_bound = None;
         let mut mismatched_lambda = None;
@@ -5704,7 +5702,8 @@ impl<'a, 'src> Checker<'a, 'src> {
                     .zip(&candidate.parameters[args.len()..])
                     .all(|(value, &ty)| self.default_argument_type(value, ty).is_some())
             {
-                if let Some((argument, arity)) = trailing {
+                let mut async_void = false;
+                if let Some((argument, lambda)) = trailing {
                     let Some(delegate) = nullability::supported_clr_signature(
                         self.delegate_signature(
                             candidate.parameters[positional.len()],
@@ -5715,9 +5714,25 @@ impl<'a, 'src> Checker<'a, 'src> {
                     else {
                         continue;
                     };
-                    if !delegate.is_some_and(|(_, signature)| signature.parameters.len() == arity) {
-                        mismatched_lambda = Some(argument.span);
+                    if !delegate.as_ref().is_some_and(|(_, signature)| {
+                        signature.parameters.len() == lambda.parameters.len()
+                    }) {
+                        mismatched_lambda = Some((
+                            argument.span,
+                            "no candidate delegate matches the trailing lambda parameter count",
+                        ));
                         continue;
+                    }
+                    if lambda.async_fn {
+                        let (_, signature) = delegate.expect("compatible delegate arity");
+                        async_void = signature.result == Type::Void;
+                        if !async_void && !asynchronous::is_task_like(types, signature.result) {
+                            mismatched_lambda = Some((
+                                argument.span,
+                                "an async lambda requires a delegate returning Task, ValueTask, or void",
+                            ));
+                            continue;
+                        }
                     }
                 }
                 if matches!(usage, OverloadUse::Method(_))
@@ -5761,7 +5776,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                     normal_member = Some(member);
                 }
                 // An exact payload bridge is more specific than boxing an Option.
-                let cost = (conversions, conversions - option_conversions);
+                let cost = (conversions, conversions - option_conversions, async_void);
                 if cost > best_cost {
                     continue;
                 }
@@ -5779,12 +5794,8 @@ impl<'a, 'src> Checker<'a, 'src> {
                     .map_or(span, |argument| argument.span);
                 return self.clr_bound_diagnostic(name, bound, actual, location);
             }
-            if let Some(span) = mismatched_lambda {
-                return Diagnostic::new(
-                    "E0340",
-                    span,
-                    "no candidate delegate matches the trailing lambda parameter count",
-                );
+            if let Some((span, message)) = mismatched_lambda {
+                return Diagnostic::new("E0340", span, message);
             }
             if let Some(error) = unsupported_signature {
                 return error;

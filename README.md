@@ -28,7 +28,9 @@ With `--framework`, an asynchronous entry point is a `fn main` that returns a CL
 
 With `--framework`, write `async fn fetch() -> string` for a function that returns a CLR `Task<string>`. An omitted result type produces a `Task`. Inside an async function, `.await` accepts a CLR `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` and yields its result. For example, `fetch().await.Trim()` waits for the string and calls `Trim` on it. An incomplete task suspends the caller and schedules a continuation through the CLR awaiter. Exceptions fault the returned task and cancellation sets its canceled state. The same exit rules apply to `async fn main`. [Runnable `.await` example](examples/await.oxel)
 
-The initial async implementation supports non-generic functions, including explicit `return`, tail expressions and loops. Generic async functions, async lambdas, `#[test]` on async functions, `catch`, and `using` inside async function bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
+Use `.await` inside `try` and `catch` blocks. An exception raised when an await resumes can reach a surrounding catch, and the catch can await another task before continuing. Generic named async functions, `#[test]` on async functions, `using`, and loops over disposable CLR enumerators inside async bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
+
+Write `async |value| { ... }` or `async { ... }` to create an async lambda with a known CLR delegate type. Both forms also work as trailing lambdas. A delegate returning `Task<T>` or `ValueTask<T>` expects a body that yields `T`. A delegate returning `Task`, `ValueTask`, or `void` expects a void body. For void delegates such as event handlers, .NET's async-void builder handles uncaught exceptions. [Runnable async catch and lambda example](examples/async_catch.oxel)
 
 ```sh
 oxel run examples/arguments.oxel -- "two words" --flag

@@ -193,7 +193,11 @@ pub(super) fn write(
                 let frame_size =
                     body.emit_async_step(block, **plan, &function.signature.parameters)?;
                 body.write(&mut text, function.span)?;
-                async_steps.push(step_rva);
+                async_steps.push((step_rva, function));
+                let type_arguments: Vec<_> = (0..function.signature.type_arity)
+                    .map(Type::MethodParameter)
+                    .collect();
+                let step = metadata.instantiate_method(step, &type_arguments);
 
                 text.align(4);
                 let rva = TEXT_RVA + CLI_HEADER_SIZE + image_offset(text.len())?;
@@ -234,17 +238,30 @@ pub(super) fn write(
             param_list,
         });
     }
-    for (index, rva) in async_steps.into_iter().enumerate() {
+    for (step_index, (rva, function)) in async_steps.into_iter().enumerate() {
+        let type_arity = function.signature.type_arity;
+        metadata.add_type_parameters(
+            index(
+                TableId::MethodDef,
+                (source_method_count + step_index + 1) as u32,
+            ),
+            &function.type_parameters,
+            &function.signature.bounds,
+        );
         let signature = Signature {
-            type_arity: 0,
+            type_arity,
             bounds: Vec::new(),
             parameters: vec![Type::NullableObject],
             result: Type::Void,
         };
         let param_list = metadata.add_parameters(&signature, &[]);
-        let signature =
-            metadata.method_signature(&[Type::NullableObject], Type::Void, Invocation::Static, 0);
-        let name = metadata.strings.add(&format!("<async_step_{index}>"));
+        let signature = metadata.method_signature(
+            &[Type::NullableObject],
+            Type::Void,
+            Invocation::Static,
+            type_arity,
+        );
+        let name = metadata.strings.add(&format!("<async_step_{step_index}>"));
         metadata.methods.push(MethodDefRow {
             rva,
             impl_flags: 0,

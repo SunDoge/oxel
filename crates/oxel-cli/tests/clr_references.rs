@@ -1711,13 +1711,65 @@ fn value_task_entry_waits_for_a_pending_clr_source() {
                 source.OnCompleted(continuation, state, token, flags);
                 ThreadPool.QueueUserWorkItem(_ => source.SetResult(42));
             }
+
+            private sealed class TrackingContext : SynchronizationContext {
+                internal readonly TaskCompletionSource<string> Failure = new();
+                internal readonly TaskCompletionSource Finished = new();
+                internal int Started;
+                public override void OperationStarted() => Interlocked.Increment(ref Started);
+                public override void OperationCompleted() => Finished.SetResult();
+                public override void Post(SendOrPostCallback callback, object? state) {
+                    ThreadPool.QueueUserWorkItem(_ => {
+                        try { callback(state); }
+                        catch (Exception error) { Failure.TrySetResult(error.Message); }
+                    });
+                }
+            }
+
+            public static async Task<string> ObserveVoid(Action callback) {
+                var previous = SynchronizationContext.Current;
+                var tracking = new TrackingContext();
+                SynchronizationContext.SetSynchronizationContext(tracking);
+                try { callback(); }
+                finally { SynchronizationContext.SetSynchronizationContext(previous); }
+                var error = await tracking.Failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await tracking.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                return $"{error}:{tracking.Started}";
+            }
         }
         "#,
         None,
     );
-    for code in [
-        "fn main() -> System.Threading.Tasks.ValueTask<i32> { TaskBridge.Start() }",
-        "async fn main() -> i32 { TaskBridge.Start().await }",
+    for (code, stdout) in [
+        (
+            "fn main() -> System.Threading.Tasks.ValueTask<i32> { TaskBridge.Start() }",
+            "",
+        ),
+        ("async fn main() -> i32 { TaskBridge.Start().await }", ""),
+        (
+            r#"
+            async fn main() -> i32 {
+                let observed = TaskBridge.ObserveVoid() async {
+                    let ignored = TaskBridge.Start().await;
+                    throw new System.InvalidOperationException("forwarded")
+                };
+                System.Console.WriteLine(observed.await);
+                try {
+                    try {
+                        let ignored = TaskBridge.Start().await;
+                        throw new System.InvalidOperationException("caught")
+                    } catch (_: System.ArgumentException) {
+                        0
+                    }
+                } catch (error: System.InvalidOperationException) {
+                    let result = TaskBridge.Start().await;
+                    System.Console.WriteLine(error.Message);
+                    result
+                }
+            }
+        "#,
+            "forwarded:1\ncaught",
+        ),
     ] {
         fs::write(project.join("main.oxel"), code).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
@@ -1728,6 +1780,7 @@ fn value_task_entry_waits_for_a_pending_clr_source() {
             .unwrap();
         assert_eq!(output.status.code(), Some(42), "{output:?}");
         assert!(output.stderr.is_empty(), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), stdout);
     }
 }
 

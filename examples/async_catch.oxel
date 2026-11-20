@@ -1,0 +1,28 @@
+use System::Func;
+use System::InvalidOperationException;
+use System::Threading::Tasks::{Task, TaskCompletionSource};
+
+fn add(left: i32, right: i32) -> i32 {
+    left + right
+}
+
+async fn main() {
+    let gate = new TaskCompletionSource();
+    let mut handled = 0;
+    let callback: Func<Task<i32>> = async {
+        add(10, try {
+            gate.Task.await;
+            0
+        } catch (error: InvalidOperationException) {
+            Task.Delay(10).await;
+            handled += 1;
+            System.Console.WriteLine(error.Message);
+            20
+        })
+    };
+    let pending = callback();
+    assert(!pending.IsCompleted);
+    gate.SetException(new InvalidOperationException("handled"));
+    System.Console.WriteLine(pending.await);
+    System.Console.WriteLine(handled);
+}

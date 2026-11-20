@@ -21,6 +21,63 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn async_lambdas_work_in_generic_functions_and_trailing_calls() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let main = project.join("main.oxel");
+    fs::write(&main, include_str!("../../../examples/async_catch.oxel")).unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"]))
+            .lines()
+            .collect::<Vec<_>>(),
+        ["handled", "30", "1"]
+    );
+
+    fs::write(
+        &main,
+        r#"
+        use System::{Func, Action};
+        use System::Threading::Tasks::{Task, TaskCompletionSource, ValueTask};
+
+        fn factory<T>(value: T) -> Func<Task<T>> {
+            async { Task.Delay(1).await; value }
+        }
+
+        async fn main() {
+            let produced = factory(30);
+            System.Console.WriteLine(produced().await);
+            let add: Func<i32, ValueTask<i32>> = async |value| { Task.Delay(1).await; value + 1 };
+            System.Console.WriteLine(add(30).await);
+            let pending = new TaskCompletionSource();
+            let completed = new TaskCompletionSource<i32>();
+            let notify: Action = async || { pending.Task.await; completed.SetResult(32); };
+            notify();
+            assert(!completed.Task.IsCompleted);
+            pending.SetResult();
+            System.Console.WriteLine(completed.Task.await);
+            let running = Task.Run() async { Task.Delay(1).await; System.Console.WriteLine(33); };
+            running.await;
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"]))
+            .lines()
+            .collect::<Vec<_>>(),
+        ["30", "31", "32", "33"]
+    );
+    fs::write(
+        &main,
+        "fn main() { let bad: System.Func<i32> = async { 1 }; }",
+    )
+    .unwrap();
+    let invalid = oxel(project, &["check", "--framework", "main.oxel"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("E0351"));
+}
+
+#[test]
 fn postfix_await_suspends_and_resumes_without_blocking_the_caller() {
     use std::{
         process::Stdio,

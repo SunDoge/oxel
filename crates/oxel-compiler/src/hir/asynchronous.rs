@@ -7,14 +7,10 @@ use crate::{Diagnostic, Span, syntax};
 pub(crate) struct Plan {
     pub frame: Type,
     pub output: Type,
-    pub completion: Type,
-    pub constructor: Member,
-    pub get_task: Member,
+    pub completion_type: Type,
+    pub completion: Completion,
     pub set_result: Member,
     pub set_exception: Member,
-    pub cancellation: Type,
-    pub cancellation_token: Member,
-    pub set_canceled: Member,
     pub action: Type,
     pub action_definition: usize,
     pub context: Type,
@@ -22,6 +18,26 @@ pub(crate) struct Plan {
     pub run_context: Member,
     pub context_callback: Type,
     pub context_callback_definition: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Completion {
+    Task {
+        constructor: Member,
+        get_task: Member,
+        wrap: Option<Member>,
+        canceled: Cancellation,
+    },
+    Void {
+        create: Member,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Cancellation {
+    pub exception: Type,
+    pub token: Member,
+    pub complete: Member,
 }
 
 pub(crate) struct Suspension {
@@ -73,6 +89,26 @@ pub(super) fn output(types: &Structs<'_, '_>, task: Type) -> Type {
         .map_or(Type::Void, |arguments| arguments[0])
 }
 
+pub(super) fn is_task_like(types: &Structs<'_, '_>, ty: Type) -> bool {
+    types
+        .ancestor_id(ty.non_nullable())
+        .is_some_and(|id| types.references.is_entry_task(id))
+}
+
+pub(super) fn body(
+    types: &Structs<'_, '_>,
+    block: super::Block,
+    locals: &[Type],
+    return_type: Type,
+    span: Span,
+) -> Checked<super::MethodBody> {
+    if locals.iter().any(|&ty| types.stack_only(ty)) {
+        return Err(error(span, "async bodies cannot store stack-only spans"));
+    }
+    let plan = Plan::resolve(types, return_type, span)?;
+    Ok(super::MethodBody::Async(block, Box::new(plan)))
+}
+
 fn member(
     types: &Structs<'_, '_>,
     owner: Type,
@@ -106,7 +142,7 @@ fn member(
     ))
 }
 
-fn context_method(
+fn static_member(
     types: &Structs<'_, '_>,
     name: &str,
     parameters: &[Type],
@@ -132,13 +168,8 @@ fn context_method(
 }
 
 impl Plan {
-    pub(super) fn resolve(types: &Structs<'_, '_>, output: Type, span: Span) -> Checked<Self> {
-        let completion = framework_generic(
-            types,
-            "System.Threading.Tasks.TaskCompletionSource",
-            output,
-            span,
-        )?;
+    fn resolve(types: &Structs<'_, '_>, return_type: Type, span: Span) -> Checked<Self> {
+        let output = output(types, return_type);
         let result_parameter = if output == Type::Void {
             &[][..]
         } else {
@@ -148,13 +179,51 @@ impl Plan {
             .references
             .exception
             .ok_or_else(|| error(span, "async functions require System.Exception"))?;
-        let cancellation = Type::External(framework_definition(
-            types,
-            "System.OperationCanceledException",
-            span,
-        )?);
-        let (cancellation_token, token_type) =
-            member(types, cancellation, "get_CancellationToken", &[], span)?;
+        let (completion_type, completion) = if return_type == Type::Void {
+            let builder = "System.Runtime.CompilerServices.AsyncVoidMethodBuilder";
+            let ty = Type::ClrStruct(framework_definition(types, builder, span)?);
+            let create = static_member(
+                types,
+                "System.Runtime.CompilerServices.AsyncVoidMethodBuilder.Create",
+                &[],
+                span,
+            )?;
+            (ty, Completion::Void { create })
+        } else {
+            let ty = framework_generic(
+                types,
+                "System.Threading.Tasks.TaskCompletionSource",
+                output,
+                span,
+            )?;
+            let exception = Type::External(framework_definition(
+                types,
+                "System.OperationCanceledException",
+                span,
+            )?);
+            let (token, token_type) = member(types, exception, "get_CancellationToken", &[], span)?;
+            let canceled = Cancellation {
+                exception,
+                token,
+                complete: member(types, ty, "SetCanceled", &[token_type], span)?.0,
+            };
+            let (get_task, task) = member(types, ty, "get_Task", &[], span)?;
+            let wrap = return_type
+                .clr_struct()
+                .then(|| {
+                    member(types, return_type, ".ctor", &[task], span).map(|(method, _)| method)
+                })
+                .transpose()?;
+            (
+                ty,
+                Completion::Task {
+                    constructor: member(types, ty, ".ctor", &[], span)?.0,
+                    get_task,
+                    wrap,
+                    canceled,
+                },
+            )
+        };
         let action_definition = framework_definition(types, "System.Action", span)?;
         let context = Type::External(framework_definition(
             types,
@@ -167,31 +236,27 @@ impl Plan {
         Ok(Self {
             frame: types.array(Type::NullableObject, span)?,
             output,
+            completion_type,
             completion,
-            constructor: member(types, completion, ".ctor", &[], span)?.0,
-            get_task: member(types, completion, "get_Task", &[], span)?.0,
-            set_result: member(types, completion, "SetResult", result_parameter, span)?.0,
+            set_result: member(types, completion_type, "SetResult", result_parameter, span)?.0,
             set_exception: member(
                 types,
-                completion,
+                completion_type,
                 "SetException",
                 &[Type::External(exception)],
                 span,
             )?
             .0,
-            cancellation,
-            cancellation_token,
-            set_canceled: member(types, completion, "SetCanceled", &[token_type], span)?.0,
             action: Type::External(action_definition),
             action_definition,
             context,
-            capture_context: context_method(
+            capture_context: static_member(
                 types,
                 "System.Threading.ExecutionContext.Capture",
                 &[],
                 span,
             )?,
-            run_context: context_method(
+            run_context: static_member(
                 types,
                 "System.Threading.ExecutionContext.Run",
                 &[context, context_callback, Type::NullableObject],

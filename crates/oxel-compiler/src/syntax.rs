@@ -1012,6 +1012,7 @@ pub(crate) struct CallArguments<'src> {
 }
 
 pub(crate) struct Lambda<'src> {
+    pub async_fn: bool,
     pub parameters: Vec<(&'src str, Span)>,
     pub body: Block<'src>,
 }
@@ -2476,7 +2477,11 @@ impl<'src> Parser<'src> {
             }
         }
         let mut arguments = arguments?;
-        if self.peek() == Pipe || (allow_literal && self.peek() == LeftBrace) {
+        let async_lambda = self.peek() == Async
+            && self.tokens.get(self.pos + 1).is_some_and(|token| {
+                matches!(token.kind, Pipe | OrOr) || (allow_literal && token.kind == LeftBrace)
+            });
+        if async_lambda || self.peek() == Pipe || (allow_literal && self.peek() == LeftBrace) {
             arguments.push(self.lambda_expression(depth)?);
         }
         Ok(arguments)
@@ -2528,6 +2533,7 @@ impl<'src> Parser<'src> {
         // delegate call are active, so charge more than an ordinary block.
         const LAMBDA_BODY_DEPTH: usize = 6;
         let start = self.current().span.start;
+        let async_fn = self.take(Async).is_some();
         let parameters = if self.take(Pipe).is_some() {
             self.list(Pipe, "'|'", Self::name)?
         } else {
@@ -2542,7 +2548,11 @@ impl<'src> Parser<'src> {
         let tree_depth = body.depth + LAMBDA_BODY_DEPTH;
         self.nesting(depth + tree_depth)?;
         Ok(Expr {
-            kind: Expression::Lambda(Box::new(Lambda { parameters, body })),
+            kind: Expression::Lambda(Box::new(Lambda {
+                async_fn,
+                parameters,
+                body,
+            })),
             span,
             depth: tree_depth,
         })
@@ -2766,7 +2776,7 @@ impl<'src> Parser<'src> {
 
     fn atom(&mut self, depth: usize, allow_literal: bool) -> Parsed<Expr<'src>> {
         let token = self.current();
-        if matches!(token.kind, Pipe | OrOr) {
+        if matches!(token.kind, Pipe | OrOr | Async) {
             return self.lambda_expression(depth);
         }
         let kind = match token.kind {
