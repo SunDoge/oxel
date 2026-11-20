@@ -228,6 +228,8 @@ Values can convert implicitly to `object` in annotations, assignments, calls and
 
 Use `as` for explicit boxing, checked casts between related reference types, or unboxing from `object`. A failed cast raises the standard CLR exception. Parenthesize the cast before accessing a member, as in `(value as Namespace.Type).Member()`. The [objects example](examples/objects.oxel) also boxes a generic struct and restores its concrete type. [CLR boxing and unboxing](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/types/boxing-and-unboxing)
 
+Use `value as? T` to get a standard `Option<T>` from a CLR runtime type check. It evaluates the input once and produces `None` for null or a type mismatch. The target must be non-nullable. CLR reference and interface matches preserve object identity, and a boxed value must match its runtime type exactly. For example, `29 as? i64` produces `None`. Use `(value as? T)?` to propagate failure. [Runnable example](examples/optional_casts.oxel)
+
 `as` also converts between numeric types. Conversions to integers truncate fractional values toward zero, then check the target range. An out-of-range result, NaN, or infinity raises `System.OverflowException` at runtime and produces a diagnostic in constant evaluation. Conversions to floating-point types round to the destination precision. An integer literal directly before a numeric cast can use the full `i64` range. A direct cast to `u64` also accepts literals up to `18446744073709551615`. See the [numeric casts example](examples/numeric_casts.oxel). [CLR numeric conversion behavior](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/numeric-conversions#explicit-numeric-conversions)
 
 ## Nullable references

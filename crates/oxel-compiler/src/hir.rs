@@ -4145,6 +4145,9 @@ impl<'a, 'src> Checker<'a, 'src> {
             Expression::Cast(source, target) => {
                 self.conversion(source, target, false, expr.span)?
             }
+            Expression::OptionalCast(source, target) => {
+                self.optional_cast(source, target, expr.span)?
+            }
             Expression::TypeTest(source, target) => {
                 self.conversion(source, target, true, expr.span)?
             }
@@ -4898,13 +4901,7 @@ impl<'a, 'src> Checker<'a, 'src> {
             return Ok((value.kind, Type::Never));
         }
         if type_test {
-            if ty.is_nullable() || self.types.nullable_underlying(ty).is_some() {
-                return Err(Diagnostic::new(
-                    "E0311",
-                    target.span,
-                    "type tests use non-nullable runtime types",
-                ));
-            }
+            self.require_runtime_test_type(ty, target.span)?;
             self.require(value.ty, Type::NullableObject, source.span)?;
             return Ok((
                 ExprKind::TypeTest(Box::new(self.coerce(value, Type::NullableObject)), ty),
@@ -4960,6 +4957,17 @@ impl<'a, 'src> Checker<'a, 'src> {
                 format!("cannot cast {from} to {to}"),
             ))
         }
+    }
+
+    fn require_runtime_test_type(&self, ty: Type, span: Span) -> Checked<()> {
+        if ty.is_nullable() || self.types.nullable_underlying(ty).is_some() {
+            return Err(Diagnostic::new(
+                "E0311",
+                span,
+                "runtime type tests and optional casts require a non-nullable target type",
+            ));
+        }
+        Ok(())
     }
 
     fn scoped_value_type(&mut self, path: &Path<'src>) -> Checked<Type> {

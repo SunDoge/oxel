@@ -543,6 +543,18 @@ impl<'src> Checker<'_, 'src> {
             .types
             .field_type(carrier, Type::TypeParameter(0), span)?;
         let payload = self.coerce(payload, expected);
+        self.pack_optional_value(value, local, (carrier, layout), condition, payload, span)
+    }
+
+    fn pack_optional_value(
+        &mut self,
+        value: Expr,
+        local: u16,
+        (carrier, layout): (Type, CarrierLayout),
+        condition: Expr,
+        payload: Expr,
+        span: Span,
+    ) -> Checked<Expr> {
         let some = self.pack_carrier(
             carrier,
             layout.success_case,
@@ -575,6 +587,64 @@ impl<'src> Checker<'_, 'src> {
             ty: carrier,
             span,
         })
+    }
+
+    pub(super) fn optional_cast(
+        &mut self,
+        source: &syntax::Expr<'src>,
+        target: &Path<'src>,
+        span: Span,
+    ) -> Checked<(ExprKind, Type)> {
+        if self.comptime {
+            return Err(Diagnostic::new(
+                "E0501",
+                span,
+                "'as?' requires runtime type information",
+            ));
+        }
+        let value = self.expression(source, None)?;
+        let ty = self.scoped_value_type(target)?;
+        self.record_annotation(target, ty);
+        if value.ty == Type::Never {
+            return Ok((value.kind, Type::Never));
+        }
+        self.require_runtime_test_type(ty, target.span)?;
+        self.require(value.ty, Type::NullableObject, source.span)?;
+
+        self.track_source_type("Option");
+        let definition = self.types.names["Option"];
+        if !self.types.definitions[definition].builtin {
+            return Err(Diagnostic::new(
+                "E0330",
+                span,
+                "'as?' requires the standard Option type",
+            ));
+        }
+        let layout =
+            CarrierLayout::for_definition(self.types, definition).expect("standard Option");
+        let carrier = self.types.constructed(definition, vec![ty], span)?;
+        let local = self.local(Type::NullableObject, span)?;
+        let load = || {
+            Box::new(Expr {
+                kind: ExprKind::Load(Value::Local(local)),
+                ty: Type::NullableObject,
+                span,
+            })
+        };
+        let condition = Expr {
+            kind: ExprKind::TypeTest(load(), ty),
+            ty: Type::Bool,
+            span,
+        };
+        let payload = Expr {
+            kind: ExprKind::CheckedCast(load(), ty),
+            ty,
+            span,
+        };
+        let value = self.coerce(value, Type::NullableObject);
+        let result =
+            self.pack_optional_value(value, local, (carrier, layout), condition, payload, span)?;
+        Ok((result.kind, result.ty))
     }
 
     pub(super) fn option_nullable(

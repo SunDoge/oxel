@@ -940,6 +940,7 @@ pub(crate) enum Expression<'src> {
     Unary(Unary, Box<Expr<'src>>),
     Binary(Binary, Box<Expr<'src>>, Box<Expr<'src>>),
     Cast(Box<Expr<'src>>, Path<'src>),
+    OptionalCast(Box<Expr<'src>>, Path<'src>),
     TypeTest(Box<Expr<'src>>, Path<'src>),
     Block(Block<'src>),
     Match(Box<Expr<'src>>, Vec<MatchArm<'src>>),
@@ -1969,7 +1970,13 @@ impl<'src> Parser<'src> {
                 if binding < min_binding {
                     break;
                 }
-                self.bump();
+                let operator = self.bump();
+                let optional = operator_kind == As
+                    && self.peek() == Question
+                    && self.current().span.start == operator.span.end;
+                if optional {
+                    self.bump();
+                }
                 let target = self.conversion_type(depth + 1)?;
                 let tree_depth = left.depth + 1;
                 self.nesting(depth + tree_depth)?;
@@ -1977,7 +1984,9 @@ impl<'src> Parser<'src> {
                     start: left.span.start,
                     end: target.span.end,
                 };
-                let kind = if operator_kind == As {
+                let kind = if optional {
+                    Expression::OptionalCast(Box::new(left), target)
+                } else if operator_kind == As {
                     Expression::Cast(Box::new(left), target)
                 } else {
                     Expression::TypeTest(Box::new(left), target)

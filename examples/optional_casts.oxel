@@ -1,0 +1,20 @@
+fn read<T>(value: object?) -> Option<T> {
+    value as? T
+}
+
+fn next(value: object?) -> Option<i32> {
+    let number = (value as? i32)?;
+    Option.Some(number + 1)
+}
+
+fn load() -> object {
+    System.Console.WriteLine("read once");
+    29
+}
+
+fn main() {
+    System.Console.WriteLine(next(load()) ?? 0);
+    System.Console.WriteLine(read::<string>("oxel") ?? "missing");
+    System.Console.WriteLine((29 as? i64) ?? 0);
+    System.Console.WriteLine((null as? string) ?? "missing");
+}

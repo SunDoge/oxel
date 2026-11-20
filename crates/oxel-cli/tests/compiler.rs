@@ -1355,6 +1355,62 @@ fn boxes_casts_and_tests_clr_objects() {
 }
 
 #[test]
+fn optional_casts_use_standard_options_and_clr_runtime_types() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("optional_casts.oxel");
+    fs::write(&path, include_str!("../../../examples/optional_casts.oxel")).unwrap();
+    assert_eq!(
+        stdout(cli(folder.path(), "run", &path)),
+        "read once\n30\noxel\n0\nmissing\n"
+    );
+
+    fs::write(
+        &path,
+        r#"
+        struct Pair { value: i32 }
+        fn fallback() -> i32 { System.Console.WriteLine("fallback"); 10 }
+        fn main() {
+            let vector = [20];
+            let boxed: object = vector;
+            if let Some(restored) = boxed as? i32[] {
+                restored[0] += 1;
+            }
+            System.Console.WriteLine(vector[0]);
+            let boxed: object = Pair { value: 30 };
+            match boxed as? Pair {
+                Some(pair) => System.Console.WriteLine(pair.value),
+                None => System.Console.WriteLine("missing"),
+            }
+            System.Console.WriteLine(30 as? i32 ?? fallback());
+            System.Console.WriteLine(30 as? bool ?? false);
+            let name: string? = "oxel";
+            System.Console.WriteLine(name as? string ?? "missing");
+            let result: Option<i32> = try { (boxed as? Pair)?.value + 1 };
+            System.Console.WriteLine(result ?? 0);
+        }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        stdout(cli(folder.path(), "run", &path)),
+        "21\n30\n30\nFalse\noxel\n31\n"
+    );
+    for (source, code) in [
+        ("fn main() { null as? string?; }", "E0311"),
+        ("fn main() { null as? void; }", "E0301"),
+        ("fn empty() {} fn main() { empty() as? object; }", "E0301"),
+        ("const BAD = 1 as? i32; fn main() {}", "E0501"),
+        (
+            "enum Option<T> { Some(T), None } fn main() { 1 as? i32; }",
+            "E0330",
+        ),
+    ] {
+        let errors = oxel::check(source).expect_err(source);
+        assert_eq!(errors[0].code, code, "{source}: {errors:?}");
+    }
+}
+
+#[test]
 fn preserves_clr_cast_checks_after_an_object_upcast() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("bad_cast.oxel");
