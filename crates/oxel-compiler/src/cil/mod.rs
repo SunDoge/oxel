@@ -84,6 +84,7 @@ pub(super) fn emit(
     sources: &[&str],
     name: &str,
     references: &References,
+    tests: Option<crate::TestOptions<'_>>,
 ) -> Result<Vec<u8>, Diagnostic> {
     let kind = if program.entry.is_some() {
         AssemblyKind::Executable
@@ -97,7 +98,7 @@ pub(super) fn emit(
             "invalid assembly name or name conflicts with a reference",
         ));
     }
-    assembly::write(program, sources, name, references)
+    assembly::write(program, sources, name, references, tests)
 }
 
 #[derive(Clone, Copy)]

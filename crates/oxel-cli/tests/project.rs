@@ -548,6 +548,34 @@ fn cached_call_diagnostics_follow_the_current_declaration_location() {
 }
 
 #[test]
+fn marking_a_function_as_a_test_invalidates_cached_callers() {
+    use std::sync::Arc;
+
+    let references = References::default();
+    let mut files = [
+        Arc::from("fn main() { helper(); }"),
+        Arc::from("internal fn helper() {}"),
+    ];
+    let mut analyzer = oxel::ProjectAnalyzer::default();
+    assert!(
+        analyzer.inspect(&files, &references)[0]
+            .diagnostics
+            .is_empty()
+    );
+
+    files[1] = Arc::from("#[test] #[ignore] fn helper() {}");
+    let marked = analyzer.inspect(&files, &references);
+    assert_eq!(marked[0].diagnostics[0].code, "E0346");
+
+    files[1] = Arc::from("internal fn helper() {}");
+    assert!(
+        analyzer.inspect(&files, &references)[0]
+            .diagnostics
+            .is_empty()
+    );
+}
+
+#[test]
 fn field_type_edits_recheck_generic_constructor_calls() {
     use std::sync::Arc;
 

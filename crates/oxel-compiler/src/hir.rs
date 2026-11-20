@@ -32,7 +32,7 @@ use iteration::local_interface_call;
 
 use crate::{
     ArgumentMode, AssemblyKind, CallableSignature, Diagnostic, DiagnosticFix, Occurrence,
-    OccurrenceKind, References, Span,
+    OccurrenceKind, References, Span, TestOptions,
     analysis::{self, Lookup, schedule},
     clr::{
         EventAccess, MetadataConstant, NullabilityOverride, PropertyAccess, TypeBound,
@@ -211,7 +211,6 @@ pub(crate) struct Program<'src> {
     pub instances: Vec<TypeInstance>,
     pub entry: Option<usize>,
     pub kind: AssemblyKind,
-    pub test_filter: Option<Box<str>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1424,12 +1423,12 @@ pub(crate) fn lower<'src>(
     mut file: syntax::Module<'_, 'src>,
     references: &References,
     kind: AssemblyKind,
-    test_filter: Option<&str>,
+    tests: Option<TestOptions<'_>>,
 ) -> Result<Program<'src>, Vec<Diagnostic>> {
-    if test_filter.is_none() {
-        file.functions.retain(|function| !function.test);
+    if tests.is_none() {
+        file.functions.retain(|function| function.test.is_none());
     }
-    let mode = if test_filter.is_some() {
+    let mode = if tests.is_some() {
         EntryPoint::None
     } else {
         EntryPoint::for_build(kind)
@@ -1437,8 +1436,8 @@ pub(crate) fn lower<'src>(
     let scope = prepare(file, references, mode, None, None)?;
     let mut functions = Vec::with_capacity(scope.runtime_functions().len());
     scope.check_runtime(std::convert::identity, |function| functions.push(function))?;
-    let entry = if let Some(filter) = test_filter {
-        let runner = test_harness::runner(scope.runtime_functions(), filter);
+    let entry = if let Some(options) = tests {
+        let runner = test_harness::runner(scope.runtime_functions(), options);
         let entry = functions.len();
         functions.push(runner);
         Some(entry)
@@ -1470,7 +1469,6 @@ pub(crate) fn lower<'src>(
         instances,
         entry,
         kind,
-        test_filter: test_filter.map(Into::into),
     })
 }
 
@@ -1608,7 +1606,7 @@ fn prepare<'ast, 'src, 'refs>(
         }
         match signature(function, &types) {
             Ok(signature) => {
-                if function.test
+                if function.test.is_some()
                     && (function.name == "main"
                         || signature.type_arity != 0
                         || !signature.parameters.is_empty()
@@ -1827,7 +1825,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
         let mut checker = Checker {
             names: &self.names,
             comptime: function.comptime,
-            in_test: function.test,
+            in_test: function.test.is_some(),
             signatures: &self.signatures,
             constants: &self.constants,
             functions: &self.functions,
@@ -4696,7 +4694,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 let index = self.names[name];
                 let signature = &self.signatures[index];
                 let declaration = &self.functions[index];
-                if declaration.test && !self.in_test {
+                if declaration.test.is_some() && !self.in_test {
                     return Err(Diagnostic::new(
                         "E0346",
                         *span,

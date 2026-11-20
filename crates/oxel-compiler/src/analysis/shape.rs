@@ -10,6 +10,7 @@ pub(super) fn signature(function: &Function<'_>) -> Hash {
         u8::from(function.comptime),
         u8::from(function.internal),
         u8::from(function.body.managed().is_none()),
+        u8::from(function.test.is_some()),
     ]);
     name(&mut hash, function.name);
     generics(&mut hash, &function.type_parameters, &function.type_bounds);

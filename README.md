@@ -75,6 +75,8 @@ Run `oxel test examples/unit_tests.oxel`, or run `oxel test` in a directory with
 
 Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names contain `adds`. Matching is case-sensitive and the compiler checks the whole test module before running the selected tests.
 
+Add `#[ignore]` alongside `#[test]` to skip a test by default, for example when it requires a service running locally. Skipped tests still undergo type checking. Use `oxel test --include-ignored` to run them as well. Combine both flags to limit execution by name.
+
 Use `oxel check --tests examples/unit_tests.oxel` to check a test module without generating or running an assembly. It accepts modules without `main` and includes `test_sources` for manifest projects. Pure Oxel modules can use this command without a .NET SDK or runtime.
 
 For editor diagnostics and navigation between tests and library code, start the language server with `oxel lsp --tests --manifest-path path/to/oxel.toml`.

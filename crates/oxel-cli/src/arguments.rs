@@ -84,6 +84,9 @@ struct TestInputs {
     /// Run only tests whose names contain this case-sensitive text.
     #[usage(long)]
     filter: Option<String>,
+    /// Run matching tests marked with #[ignore] as well.
+    #[usage(long)]
+    include_ignored: bool,
 }
 
 #[derive(Args)]
@@ -108,12 +111,19 @@ struct EditorInputs {
 
 pub(super) enum Action {
     Compile,
-    Check { tests: bool },
+    Check {
+        tests: bool,
+    },
     Run,
-    Test(Option<String>),
+    Test {
+        filter: Option<String>,
+        include_ignored: bool,
+    },
     Publish,
     Restore,
-    Lsp { tests: bool },
+    Lsp {
+        tests: bool,
+    },
 }
 
 pub(super) struct Options {
@@ -167,7 +177,13 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
             arguments = run.arguments;
             (Action::Run, run.build)
         }
-        Command::Test(test) => (Action::Test(test.filter), test.build),
+        Command::Test(test) => (
+            Action::Test {
+                filter: test.filter,
+                include_ignored: test.include_ignored,
+            },
+            test.build,
+        ),
         Command::Publish(build) => {
             native = true;
             (Action::Publish, build)

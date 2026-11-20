@@ -669,7 +669,7 @@ pub(crate) enum PatternKind<'src> {
 pub(crate) struct Function<'src> {
     pub internal: bool,
     pub comptime: bool,
-    pub test: bool,
+    pub test: Option<TestAttribute>,
     pub name: &'src str,
     pub name_span: Span,
     pub declaration_span: Span,
@@ -678,6 +678,12 @@ pub(crate) struct Function<'src> {
     pub parameters: Vec<FunctionParameter<'src>>,
     pub result: Option<Path<'src>>,
     pub body: FunctionBody<'src>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestAttribute {
+    Enabled,
+    Ignored,
 }
 
 pub(crate) struct FunctionParameter<'src> {
@@ -1620,7 +1626,7 @@ impl<'src> Parser<'src> {
         Ok(Function {
             internal: header.internal,
             comptime: header.comptime,
-            test: false,
+            test: None,
             name: header.name,
             name_span: header.name_span,
             declaration_span: Span {
@@ -1636,22 +1642,48 @@ impl<'src> Parser<'src> {
     }
 
     fn test_function(&mut self) -> Parsed<Function<'src>> {
-        let start = self.bump().span.start;
-        self.expect(LeftBracket, "'[' after '#'")?;
-        let (attribute, span) = self.name()?;
-        if attribute != "test" {
+        let start = self.current().span.start;
+        let mut test = false;
+        let mut ignore = None;
+        while self.take(Hash).is_some() {
+            self.expect(LeftBracket, "'[' after '#'")?;
+            let (attribute, span) = self.name()?;
+            let duplicate = match attribute {
+                "test" => std::mem::replace(&mut test, true),
+                "ignore" => ignore.replace(span).is_some(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "E0346",
+                        span,
+                        format!("unknown attribute '{attribute}'"),
+                    ));
+                }
+            };
+            if duplicate {
+                return Err(Diagnostic::new(
+                    "E0346",
+                    span,
+                    format!("duplicate attribute '#[{attribute}]'"),
+                ));
+            }
+            self.expect(RightBracket, "']' after the attribute name")?;
+        }
+        if !test && let Some(span) = ignore {
             return Err(Diagnostic::new(
                 "E0346",
                 span,
-                format!("unknown attribute '{attribute}'"),
+                "'#[ignore]' requires '#[test]'",
             ));
         }
-        self.expect(RightBracket, "']' after 'test'")?;
         if self.peek() != Fn {
             return Err(self.expected("'fn' after '#[test]'"));
         }
         let mut function = self.function(None)?;
-        function.test = true;
+        function.test = Some(if ignore.is_some() {
+            TestAttribute::Ignored
+        } else {
+            TestAttribute::Enabled
+        });
         function.internal = true;
         function.declaration_span.start = start;
         Ok(function)

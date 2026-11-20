@@ -4,9 +4,12 @@ use super::{
     Binary, Block, Catch, Checked, Checker, ExceptionRegion, Expr, ExprKind, Function, MethodBody,
     Signature, Statement, Target, Type, Value,
 };
-use crate::{Diagnostic, Span, syntax};
+use crate::{Diagnostic, Span, TestOptions, syntax};
 
-pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>], filter: &str) -> Function<'src> {
+pub(super) fn runner<'src>(
+    functions: &[&syntax::Function<'src>],
+    options: TestOptions<'_>,
+) -> Function<'src> {
     let span = Span::default();
     let expr = |kind, ty| Expr { kind, ty, span };
     let integer = |number| expr(ExprKind::Integer(number), Type::I32);
@@ -27,11 +30,17 @@ pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>], filter: &str) 
     };
     let mut statements = vec![save_failures(integer(0))];
     let mut count = 0;
+    let mut ignored = 0;
     for (index, test) in functions
         .iter()
         .enumerate()
-        .filter(|(_, test)| test.test && test.name.contains(filter))
+        .filter(|(_, test)| test.test.is_some() && test.name.contains(options.filter))
     {
+        if test.test == Some(syntax::TestAttribute::Ignored) && !options.include_ignored {
+            statements.push(print(string(format!("ignored {}", test.name))));
+            ignored += 1;
+            continue;
+        }
         count += 1;
         let call = expr(
             ExprKind::Call(Target::Function(index, Box::new([])), Vec::new()),
@@ -66,6 +75,11 @@ pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>], filter: &str) 
         )));
     }
     let tests = if count == 1 { "test" } else { "tests" };
+    let summary_end = if ignored == 0 {
+        " failed".into()
+    } else {
+        format!(" failed, {ignored} ignored")
+    };
     statements.push(print(expr(
         ExprKind::Interpolation(vec![
             string(format!("{count} {tests}, ")),
@@ -73,7 +87,7 @@ pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>], filter: &str) 
                 ExprKind::BoxValue(Box::new(load(failures, Type::I32))),
                 Type::Object,
             ),
-            string(" failed".into()),
+            string(summary_end),
         ]),
         Type::String,
     )));

@@ -26,6 +26,15 @@ pub struct SourceDiagnostic {
     pub diagnostic: Diagnostic,
 }
 
+/// Selects the tests to run after checking the entire module.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TestOptions<'a> {
+    /// Case-sensitive substring of a test name. The empty string matches all tests.
+    pub filter: &'a str,
+    /// Run matching tests marked with `#[ignore]` as well.
+    pub include_ignored: bool,
+}
+
 /// Type-checks all sources as one module with a single executable entry point.
 pub fn check_project(
     sources: &[&str],
@@ -88,7 +97,27 @@ pub fn compile_test_project_filtered(
     kind: AssemblyKind,
     filter: &str,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
-    compile(sources, assembly_name, references, kind, Some(filter))
+    compile_test_project_with_options(
+        sources,
+        assembly_name,
+        references,
+        kind,
+        TestOptions {
+            filter,
+            ..TestOptions::default()
+        },
+    )
+}
+
+/// Compiles the test module with a synthetic entry point and the given selection.
+pub fn compile_test_project_with_options(
+    sources: &[&str],
+    assembly_name: &str,
+    references: &References,
+    kind: AssemblyKind,
+    options: TestOptions<'_>,
+) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
+    compile(sources, assembly_name, references, kind, Some(options))
 }
 
 fn compile(
@@ -96,11 +125,11 @@ fn compile(
     assembly_name: &str,
     references: &References,
     kind: AssemblyKind,
-    test_filter: Option<&str>,
+    tests: Option<TestOptions<'_>>,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
     let project = Project::new(sources);
-    let program = project.analyze(|module| hir::lower(module, references, kind, test_filter))?;
-    cil::emit(&program, sources, assembly_name, references)
+    let program = project.analyze(|module| hir::lower(module, references, kind, tests))?;
+    cil::emit(&program, sources, assembly_name, references, tests)
         .map_err(|error| vec![project.map.locate(error)])
 }
 

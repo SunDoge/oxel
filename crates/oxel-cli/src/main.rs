@@ -18,7 +18,7 @@ use std::{
 use arguments::{Action, Options, usage_error};
 use diagnostics::Format;
 use native_assets::{NativeLibrary, copy_libraries};
-use oxel::{AssemblyKind, References};
+use oxel::{AssemblyKind, References, TestOptions};
 
 const RUNTIME_CONFIG: &str = r#"{
   "runtimeOptions": {
@@ -93,7 +93,7 @@ fn cli(run: &mut Run) -> ExitCode {
         sources = manifest.sources;
         if matches!(
             action,
-            Action::Test(_) | Action::Check { tests: true } | Action::Lsp { tests: true }
+            Action::Test { .. } | Action::Check { tests: true } | Action::Lsp { tests: true }
         ) {
             sources.extend(manifest.test_sources);
         }
@@ -153,7 +153,7 @@ fn cli(run: &mut Run) -> ExitCode {
         } else {
             None
         };
-        let runtime_kind = if matches!(action, Action::Test(_)) {
+        let runtime_kind = if matches!(action, Action::Test { .. }) {
             AssemblyKind::Executable
         } else {
             kind
@@ -291,12 +291,18 @@ fn execute(
         (path.as_path(), Path::new(""), name)
     };
     let compiled = match &action {
-        Action::Test(filter) => oxel::compile_test_project_filtered(
+        Action::Test {
+            filter,
+            include_ignored,
+        } => oxel::compile_test_project_with_options(
             &sources,
             name,
             &references,
             kind,
-            filter.as_deref().unwrap_or_default(),
+            TestOptions {
+                filter: filter.as_deref().unwrap_or_default(),
+                include_ignored: *include_ignored,
+            },
         ),
         _ => oxel::compile_project_with_kind(&sources, name, &references, kind),
     };
@@ -319,7 +325,7 @@ fn execute(
             return format.error(origin, "E0004", error.to_string());
         }
         match action {
-            Action::Run | Action::Test(_) => {
+            Action::Run | Action::Test { .. } => {
                 return run_dll(
                     origin,
                     &output.join(format!("{name}.dll")),
@@ -358,7 +364,7 @@ fn execute(
         }
     }
 
-    if matches!(action, Action::Run | Action::Test(_)) {
+    if matches!(action, Action::Run | Action::Test { .. }) {
         return run(
             origin,
             name,

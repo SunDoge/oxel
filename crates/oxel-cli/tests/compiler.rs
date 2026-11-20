@@ -97,6 +97,9 @@ fn unit_tests_run_in_order_and_fail_independently_of_main() {
         "#[test] fn argument(value: i32) {}",
         "#[test] fn result() -> bool { true }",
         "fn main() { example(); } #[test] fn example() {}",
+        "#[ignore] fn example() {}",
+        "#[test] #[test] fn example() {}",
+        "#[test] #[ignore] #[ignore] fn example() {}",
     ] {
         let errors = oxel::compile_test_project(
             &[source],
@@ -107,6 +110,62 @@ fn unit_tests_run_in_order_and_fail_independently_of_main() {
         .unwrap_err();
         assert_eq!(errors[0].diagnostic.code, "E0346", "{source}: {errors:?}");
     }
+}
+
+#[test]
+fn ignored_tests_are_checked_and_run_on_request() {
+    let folder = tempfile::tempdir().unwrap();
+    let directory = folder.path();
+    let tests = directory.join("tests.oxel");
+    let run = |flags: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_oxel"))
+            .current_dir(directory)
+            .arg("test")
+            .args(flags)
+            .arg(&tests)
+            .output()
+            .unwrap()
+    };
+    fs::write(
+        &tests,
+        r#"
+        #[test] #[ignore]
+        fn needs_service() { assert(false, "service missing"); }
+        #[test]
+        fn always_runs() {}
+        #[ignore] #[test]
+        fn needs_network() {}
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        stdout(run(&[])),
+        "ignored needs_service\nok always_runs\nignored needs_network\n1 test, 0 failed, 2 ignored\n",
+    );
+    assert_eq!(
+        stdout(run(&["--filter", "needs_network"])),
+        "ignored needs_network\n0 tests, 0 failed, 1 ignored\n",
+    );
+    assert_eq!(
+        stdout(run(&["--include-ignored", "--filter", "needs_network"])),
+        "ok needs_network\n1 test, 0 failed\n",
+    );
+    let result = run(&["--include-ignored"]);
+    assert_eq!(result.status.code(), Some(1));
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(output.starts_with("FAIL needs_service\n"), "{output}");
+    assert!(
+        output.ends_with("ok always_runs\nok needs_network\n3 tests, 1 failed\n"),
+        "{output}"
+    );
+    fs::write(&tests, "#[test] #[ignore] fn broken() { unknown(); }").unwrap();
+    let result = run(&["--filter", "absent"]);
+    assert!(!result.status.success());
+    let error = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        error.contains("tests.oxel:1:") && error.contains("E0203"),
+        "{error}"
+    );
 }
 
 #[test]

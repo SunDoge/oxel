@@ -15,9 +15,9 @@ pub use analysis::{
 pub use clr::{References, valid_assembly_name};
 pub use hir::{Type, clr_function_signatures};
 pub use project::{
-    AssemblyKind, SourceDiagnostic, check_project, check_project_with_kind, check_test_project,
-    compile_project, compile_project_with_kind, compile_test_project,
-    compile_test_project_filtered,
+    AssemblyKind, SourceDiagnostic, TestOptions, check_project, check_project_with_kind,
+    check_test_project, compile_project, compile_project_with_kind, compile_test_project,
+    compile_test_project_filtered, compile_test_project_with_options,
 };
 pub use syntax::{CallSite, call_site, declared_function_signature, valid_identifier};
 
@@ -203,5 +203,5 @@ pub fn compile_with_references(
         AssemblyKind::Executable,
         None,
     )?;
-    cil::emit(&program, &[source], assembly_name, references).map_err(|error| vec![error])
+    cil::emit(&program, &[source], assembly_name, references, None).map_err(|error| vec![error])
 }

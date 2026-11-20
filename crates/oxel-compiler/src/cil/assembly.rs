@@ -24,7 +24,7 @@ use super::{
     StackSlot, TYPE_DEF, TYPE_SPEC, WRITE_LINE_OVERLOADS,
 };
 use crate::{
-    ArgumentMode, AssemblyKind, Diagnostic, References, Span,
+    ArgumentMode, AssemblyKind, Diagnostic, References, Span, TestOptions,
     clr::{Assembly, BUILTIN_ASSEMBLIES, Invocation, TypeBoundKind, builtin_assembly},
     hir::{GenericBound, InstanceKind, MethodBody, Program, Signature, Struct, Type, TypeInstance},
     syntax::{NativeImport, ParameterPassing},
@@ -70,6 +70,7 @@ pub(super) fn write(
     sources: &[&str],
     name: &str,
     references: &References,
+    tests: Option<TestOptions<'_>>,
 ) -> Result<Vec<u8>, Diagnostic> {
     let field_count: usize = program
         .structs
@@ -114,7 +115,7 @@ pub(super) fn write(
         sources,
         references,
         &program.instances,
-        program.test_filter.as_deref(),
+        tests,
     );
     metadata.add_structs(&program.structs, namespace, method_count as u32 + 1);
     for (method_index, (function, lambda_base)) in methods.into_iter().zip(lambda_bases).enumerate()
@@ -321,7 +322,7 @@ impl<'refs> Tables<'refs> {
         sources: &[&str],
         externals: &'refs References,
         instances: &'refs [TypeInstance],
-        test_filter: Option<&str>,
+        tests: Option<TestOptions<'_>>,
     ) -> Self {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
@@ -332,12 +333,19 @@ impl<'refs> Tables<'refs> {
         if namespace.is_some() {
             hash.update(b"library\0");
         }
-        if let Some(filter) = test_filter {
+        if let Some(TestOptions {
+            filter,
+            include_ignored,
+        }) = tests
+        {
             hash.update(b"tests\0");
             if !filter.is_empty() {
                 hash.update(b"filter\0");
                 hash.update(&(filter.len() as u64).to_le_bytes());
                 hash.update(filter.as_bytes());
+            }
+            if include_ignored {
+                hash.update(b"include-ignored\0");
             }
         }
         hash.update(&(sources.len() as u64).to_le_bytes());
