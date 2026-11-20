@@ -184,7 +184,14 @@ impl ProjectAnalyzer {
             .clone()
             .flat_map(|source| source.diagnostics.iter().cloned())
             .collect();
-        if diagnostics.is_empty() {
+        let scoped = parsed.clone().any(|source| {
+            source.file.scope.namespace.is_some() || !source.file.scope.imports.is_empty()
+        });
+        // Declaration and dependency cache keys in flat projects are unqualified.
+        // Scoped projects still reuse parsed files and rebind their names.
+        if scoped {
+            self.bodies = BodyCache::default();
+        } else if diagnostics.is_empty() {
             let mut environment = blake3::Hasher::new();
             environment.update(&(references.assemblies().len() as u64).to_le_bytes());
             for assembly in references.assemblies() {
@@ -207,7 +214,7 @@ impl ProjectAnalyzer {
             diagnostics,
             references,
             self.kind,
-            Some(&mut self.bodies),
+            (!scoped).then_some(&mut self.bodies),
         )
     }
 }

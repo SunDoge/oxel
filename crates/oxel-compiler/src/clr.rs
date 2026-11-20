@@ -1221,6 +1221,21 @@ impl References {
             })
     }
 
+    pub(crate) fn has_import_path(&self, path: &str) -> bool {
+        fn matches(path: &str, candidate: &str) -> bool {
+            candidate
+                .strip_prefix(path)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '`']))
+        }
+        self.type_names
+            .keys()
+            .chain(self.names.keys())
+            .chain(self.static_properties.keys())
+            .chain(self.static_events.keys())
+            .chain(self.static_fields.keys())
+            .any(|name| matches(path, name))
+    }
+
     pub(crate) fn members(&self, owner: usize, name: &str) -> &[usize] {
         self.types[owner]
             .members

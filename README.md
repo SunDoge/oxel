@@ -66,7 +66,18 @@ oxel check examples/project/main.oxel examples/project/geometry.oxel
 oxel run examples/project/main.oxel examples/project/geometry.oxel
 ```
 
-Pass the files of a module as positional arguments to `check`, `compile`, `run` or `publish`. All files share top-level function and type names, and the module has one `main`. The first source filename supplies the default executable name. Each file is parsed separately, and diagnostics show positions in the originating file.
+Pass the source files as positional arguments to `check`, `compile`, `run` or `publish`. The first source filename supplies the default executable name. Each file is parsed separately, and diagnostics show positions in the originating file.
+
+Place `namespace Geometry;` at the top of a file to put its declarations in a named scope. Files with the same namespace can reference each other's declarations by their short names. Files without a namespace remain in the root scope. An executable has one `main` across its namespaces.
+
+Use explicit paths such as `Geometry::area()` or add file-local imports before your declarations. Imports can select individual names, group names from a common prefix, or assign aliases. They work with Oxel declarations and CLR references. Paths in `use` start at the root of the project or the referenced CLR namespace.
+
+```rust
+use Geometry::{Point, area as measure};
+use System::Console::WriteLine as print;
+```
+
+Run `oxel run --manifest-path examples/namespaces/oxel.toml` for an example. [Namespace example](examples/namespaces/main.oxel)
 
 ## Unit tests
 
@@ -118,6 +129,8 @@ Run `check`, `compile`, `run` or `publish` without source arguments from the man
 ### Managed libraries
 
 Set `kind = "library"` under `[package]` to build a managed CLR library. The package name becomes its CLR namespace and must use dot-separated Oxel identifiers, such as `Samples.Math`. Oxel exports runtime functions on `Samples.Math.Program` and declared types under `Samples.Math` by default. A library can have a function named `main` with any supported signature.
+
+A source namespace appends to the package namespace. For example, `namespace Geometry;` in `Samples.Math` emits types under `Samples.Math.Geometry` and functions on `Samples.Math.Geometry.Program`.
 
 ```sh
 oxel check --manifest-path examples/math_library/oxel.toml

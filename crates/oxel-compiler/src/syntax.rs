@@ -582,13 +582,27 @@ impl<'src> Path<'src> {
 
 #[derive(Default)]
 pub(crate) struct File<'src> {
+    pub scope: FileScope<'src>,
     pub functions: Vec<Function<'src>>,
     pub types: Vec<TypeDefinition<'src>>,
     pub constants: Vec<ConstDefinition<'src>>,
 }
 
 #[derive(Default)]
+pub(crate) struct FileScope<'src> {
+    pub start: usize,
+    pub namespace: Option<Path<'src>>,
+    pub imports: Vec<Import<'src>>,
+}
+
+pub(crate) struct Import<'src> {
+    pub path: Path<'src>,
+    pub alias: (&'src str, Span),
+}
+
+#[derive(Default)]
 pub(crate) struct Module<'ast, 'src> {
+    pub scopes: Vec<&'ast FileScope<'src>>,
     pub functions: Vec<&'ast Function<'src>>,
     pub types: Vec<&'ast TypeDefinition<'src>>,
     pub constants: Vec<&'ast ConstDefinition<'src>>,
@@ -598,6 +612,7 @@ impl<'ast, 'src> Module<'ast, 'src> {
     pub fn new(files: impl IntoIterator<Item = &'ast File<'src>>) -> Self {
         let mut module = Self::default();
         for file in files {
+            module.scopes.push(&file.scope);
             module.functions.extend(&file.functions);
             module.types.extend(&file.types);
             module.constants.extend(&file.constants);
@@ -1182,6 +1197,7 @@ fn parse_with_cursor(
         call_site: None,
     };
     let mut file = File::default();
+    file.scope.start = base;
     while parser.peek() != Eof {
         if cursor.is_some_and(|offset| offset < parser.current().span.start) {
             break;
@@ -1198,6 +1214,40 @@ fn parse_with_cursor(
                 Err(parser
                     .expected("'fn', 'comptime', 'extern', 'struct', or 'enum' after 'internal'"))
             }
+            Name if parser.text(parser.current()) == "namespace" => (|| {
+                let keyword = parser.bump();
+                if file.scope.namespace.is_some()
+                    || !file.scope.imports.is_empty()
+                    || !file.functions.is_empty()
+                    || !file.types.is_empty()
+                    || !file.constants.is_empty()
+                {
+                    return Err(Diagnostic::new(
+                        "E0110",
+                        keyword.span,
+                        "a namespace must appear once, before imports and declarations",
+                    ));
+                }
+                let path = parser.path()?;
+                parser.semicolon()?;
+                file.scope.namespace = Some(path);
+                Ok(())
+            })(),
+            Name if parser.text(parser.current()) == "use" => (|| {
+                let keyword = parser.bump();
+                if !file.functions.is_empty()
+                    || !file.types.is_empty()
+                    || !file.constants.is_empty()
+                {
+                    return Err(Diagnostic::new(
+                        "E0110",
+                        keyword.span,
+                        "imports must appear before declarations",
+                    ));
+                }
+                file.scope.imports.extend(parser.imports()?);
+                Ok(())
+            })(),
             Hash => parser
                 .test_function()
                 .map(|function| file.functions.push(function)),
@@ -1303,7 +1353,8 @@ impl<'src> Parser<'src> {
         matches!(
             self.peek(),
             Fn | Comptime | Async | Extern | Struct | Enum | Const | Hash
-        ) || self.is_internal(self.current())
+        ) || (self.peek() == Name
+            && matches!(self.text(self.current()), "internal" | "namespace" | "use"))
     }
 
     fn semicolon(&mut self) -> Parsed<Token> {
@@ -1377,11 +1428,16 @@ impl<'src> Parser<'src> {
     fn path(&mut self) -> Parsed<Path<'src>> {
         let (first, mut span) = self.name()?;
         let mut segments = vec![(first, span)];
-        while self.peek() == Dot
+        while (self.peek() == Dot
             && self
                 .tokens
                 .get(self.pos + 1)
-                .is_none_or(|token| token.kind != Await)
+                .is_none_or(|token| token.kind != Await))
+            || (self.peek() == DoubleColon
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|token| token.kind == Name))
         {
             self.bump();
             let (name, part) = self.name()?;
@@ -1394,6 +1450,37 @@ impl<'src> Parser<'src> {
             type_arguments: Vec::new(),
             suffixes: Vec::new(),
         })
+    }
+
+    fn imports(&mut self) -> Parsed<Vec<Import<'src>>> {
+        let prefix = self.path()?;
+        let imports = if self.take(DoubleColon).is_some() {
+            self.expect(LeftBrace, "'{' after import prefix")?;
+            if self.peek() == RightBrace {
+                return Err(self.expected("an import name"));
+            }
+            self.list(RightBrace, "'}'", |parser| {
+                let path = parser.path()?;
+                let mut import = parser.import_alias(path)?;
+                let mut segments = prefix.segments.clone();
+                segments.append(&mut import.path.segments);
+                import.path.segments = segments;
+                Ok(import)
+            })?
+        } else {
+            vec![self.import_alias(prefix)?]
+        };
+        self.semicolon()?;
+        Ok(imports)
+    }
+
+    fn import_alias(&mut self, path: Path<'src>) -> Parsed<Import<'src>> {
+        let alias = if self.take(As).is_some() {
+            self.name()?
+        } else {
+            *path.segments.last().expect("nonempty import path")
+        };
+        Ok(Import { path, alias })
     }
 
     fn type_path(&mut self, depth: usize) -> Parsed<Path<'src>> {
@@ -2466,52 +2553,49 @@ impl<'src> Parser<'src> {
         let (type_arguments, end) = self
             .call_type_arguments(depth)?
             .unwrap_or_else(|| (Vec::new(), path.span.end));
-        Ok(
-            if allow_literal && path.segments.len() == 1 && self.take(LeftBrace).is_some() {
-                let mut fields = Vec::new();
-                let mut base = None;
-                while self.peek() != RightBrace {
-                    if self.take(DotDot).is_some() {
-                        base = Some(Box::new(self.expression(0, depth)?));
-                        self.take(Comma);
-                        break;
-                    }
-                    let (name, span) = self.name()?;
-                    let value = if self.take(Colon).is_some() {
-                        self.expression(0, depth)?
-                    } else {
-                        Expr {
-                            kind: Expression::Name(Path::single(name, span)),
-                            span,
-                            depth: 1,
-                        }
-                    };
-                    fields.push((name, span, value));
-                    if self.take(Comma).is_none() {
-                        break;
-                    }
+        Ok(if allow_literal && self.take(LeftBrace).is_some() {
+            let mut fields = Vec::new();
+            let mut base = None;
+            while self.peek() != RightBrace {
+                if self.take(DotDot).is_some() {
+                    base = Some(Box::new(self.expression(0, depth)?));
+                    self.take(Comma);
+                    break;
                 }
-                self.expect(RightBrace, "'}'")?;
-                path.type_arguments = type_arguments;
-                path.span.end = end;
-                Expression::Construct { path, fields, base }
-            } else if !type_arguments.is_empty() && self.take(Dot).is_some() {
-                path.type_arguments = type_arguments;
-                path.span.end = end;
-                return self.static_member(path, depth, allow_literal);
-            } else if !type_arguments.is_empty() || self.peek() == LeftParen {
-                self.expect(LeftParen, "'('")?;
-                let arguments =
-                    self.call_arguments(depth, allow_literal, path.span, Some(&path))?;
-                Expression::Call {
-                    path,
-                    type_arguments,
-                    arguments,
+                let (name, span) = self.name()?;
+                let value = if self.take(Colon).is_some() {
+                    self.expression(0, depth)?
+                } else {
+                    Expr {
+                        kind: Expression::Name(Path::single(name, span)),
+                        span,
+                        depth: 1,
+                    }
+                };
+                fields.push((name, span, value));
+                if self.take(Comma).is_none() {
+                    break;
                 }
-            } else {
-                Expression::Name(path)
-            },
-        )
+            }
+            self.expect(RightBrace, "'}'")?;
+            path.type_arguments = type_arguments;
+            path.span.end = end;
+            Expression::Construct { path, fields, base }
+        } else if !type_arguments.is_empty() && self.take(Dot).is_some() {
+            path.type_arguments = type_arguments;
+            path.span.end = end;
+            return self.static_member(path, depth, allow_literal);
+        } else if !type_arguments.is_empty() || self.peek() == LeftParen {
+            self.expect(LeftParen, "'('")?;
+            let arguments = self.call_arguments(depth, allow_literal, path.span, Some(&path))?;
+            Expression::Call {
+                path,
+                type_arguments,
+                arguments,
+            }
+        } else {
+            Expression::Name(path)
+        })
     }
 
     fn static_member(

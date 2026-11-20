@@ -1,0 +1,7 @@
+namespace Physics;
+
+struct Point { x: i32 }
+
+fn area(point: Point) -> i32 {
+    point.x + 8
+}

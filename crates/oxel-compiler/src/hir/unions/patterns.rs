@@ -747,7 +747,11 @@ impl<'src> Checker<'_, 'src> {
                 };
                 let definition = &types.definitions[id];
                 if definition.union.is_some()
-                    || !matches!(path.segments.as_slice(), [(name, _)] if *name == definition.name)
+                    || types.scopes.lookup(
+                        &types.names,
+                        &crate::hir::path_name(&path.segments),
+                        path.span,
+                    ) != Some(&id)
                 {
                     return Err(Diagnostic::new(
                         "E0331",
@@ -798,14 +802,8 @@ impl<'src> Checker<'_, 'src> {
         let (owner, name, name_span) = match path.segments.as_slice() {
             [("_", _)] if children.is_none() => return Ok(()),
             [(name, span)] => (None, *name, *span),
-            [owner, (name, span)] => (Some(*owner), *name, *span),
-            _ => {
-                return Err(Diagnostic::new(
-                    "E0331",
-                    path.span,
-                    "expected a variant pattern",
-                ));
-            }
+            [owner @ .., (name, span)] => (Some(owner), *name, *span),
+            [] => unreachable!("nonempty pattern path"),
         };
         if place != 0 && children.is_none() && owner.is_none() {
             paths.charge(paths.alternatives.len(), pattern.span)?;
@@ -817,8 +815,13 @@ impl<'src> Checker<'_, 'src> {
         let (definition, union) = union(types, ty).ok_or_else(|| {
             Diagnostic::new("E0331", path.span, "variant patterns require an enum value")
         })?;
-        if let Some((owner, span)) = owner {
-            if owner != definition.name {
+        if let Some(owner) = owner {
+            let span = owner.last().expect("qualified pattern owner").1;
+            let resolved = types
+                .scopes
+                .lookup(&types.names, &crate::hir::path_name(owner), span)
+                .copied();
+            if resolved != types.definition_of(ty) {
                 return Err(Diagnostic::new(
                     "E0331",
                     span,

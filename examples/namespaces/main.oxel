@@ -1,0 +1,10 @@
+namespace App;
+
+use Geometry::{Point, area as measure};
+use System::Console::WriteLine as print;
+
+fn main() {
+    let measured = measure(Point { x: 7 });
+    let simulated = Physics::area(Physics::Point { x: 12 });
+    print(measured + simulated);
+}

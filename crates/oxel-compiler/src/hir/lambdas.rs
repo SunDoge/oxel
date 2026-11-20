@@ -279,6 +279,7 @@ impl<'src> Checker<'_, 'src> {
             .map(Type::MethodParameter)
             .collect();
         self.lambdas.push(Function {
+            namespace: None,
             has_exception_regions,
             internal: true,
             name: "<lambda>",

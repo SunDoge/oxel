@@ -1,22 +1,25 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 use crate::{
     Diagnostic, Span,
     syntax::{Block, Expr, Expression, Pattern, PatternKind, Statement},
 };
 
-use super::super::{Checked, ModuleScope};
+use super::super::{Checked, ModuleScope, path_name};
 
 pub(super) struct Dependencies<'a, 'src> {
     module: &'a ModuleScope<'a, 'src, 'a>,
-    constants: &'a HashMap<&'src str, usize>,
+    constants: &'a HashMap<Cow<'src, str>, usize>,
     first_function: usize,
 }
 
 impl<'a, 'src> Dependencies<'a, 'src> {
     pub(super) fn new(
         module: &'a ModuleScope<'a, 'src, 'a>,
-        constants: &'a HashMap<&'src str, usize>,
+        constants: &'a HashMap<Cow<'src, str>, usize>,
         first_function: usize,
     ) -> Self {
         Self {
@@ -80,7 +83,15 @@ impl<'src> Walk<'_, 'src> {
             Expression::Name(path) => {
                 let (name, span) = path.segments[0];
                 if !self.scopes.iter().rev().any(|scope| scope.contains(name)) {
-                    if let Some(&id) = self.context.constants.get(name) {
+                    let scopes = &self.context.module.types.scopes;
+                    let constant = (1..=path.segments.len()).find_map(|length| {
+                        scopes.lookup(
+                            self.context.constants,
+                            &path_name(&path.segments[..length]),
+                            span,
+                        )
+                    });
+                    if let Some(&id) = constant {
                         self.edges.push(id);
                     } else if path.segments.len() == 1 {
                         return Err(Diagnostic::new(
@@ -114,13 +125,17 @@ impl<'src> Walk<'_, 'src> {
             }
             Expression::Call {
                 path, arguments, ..
-            } if path.segments.len() == 2
+            } if path.segments.len() >= 2
                 && self
                     .context
                     .module
                     .types
-                    .names
-                    .get(path.segments[0].0)
+                    .scopes
+                    .lookup(
+                        &self.context.module.types.names,
+                        &path_name(&path.segments[..path.segments.len() - 1]),
+                        path.span,
+                    )
                     .is_some_and(|&id| {
                         self.context.module.types.definitions[id].union.is_some()
                     }) =>
@@ -131,12 +146,22 @@ impl<'src> Walk<'_, 'src> {
             }
             Expression::Call {
                 path, arguments, ..
-            } if path.segments.len() == 1 => {
-                let (name, span) = path.segments[0];
+            } => {
+                let name = path_name(&path.segments);
+                let span = path.span;
                 let module = self.context.module;
-                let index = module.names.get(name).copied().ok_or_else(|| {
-                    Diagnostic::new("E0203", span, format!("unknown function '{name}'"))
-                })?;
+                let index = module
+                    .types
+                    .scopes
+                    .lookup(&module.names, &name, span)
+                    .copied()
+                    .ok_or_else(|| {
+                        if module.types.scopes.expand(&name, span).contains('.') {
+                            self.unsupported(span)
+                        } else {
+                            Diagnostic::new("E0203", span, format!("unknown function '{name}'"))
+                        }
+                    })?;
                 if !module.functions[index].comptime {
                     return Err(Diagnostic::new(
                         "E0501",

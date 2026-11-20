@@ -14,6 +14,7 @@ pub(in crate::hir) fn builtin_field_info() -> Struct<'static> {
         ("readonly", Type::Bool),
     ];
     Struct {
+        namespace: None,
         internal: false,
         name: "compiler.FieldInfo",
         builtin: true,

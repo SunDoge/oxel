@@ -1,0 +1,13 @@
+namespace Geometry;
+
+const BASE = scale(1);
+
+comptime fn scale(value: i32) -> i32 {
+    value + 2
+}
+
+struct Point { x: i32 }
+
+fn area(point: Point) -> i32 {
+    point.x + BASE
+}

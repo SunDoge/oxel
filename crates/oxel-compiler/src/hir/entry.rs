@@ -94,6 +94,7 @@ impl Entry {
         signature.result = value.ty;
         let entry = functions.len();
         functions.push(Function {
+            namespace: None,
             has_exception_regions: false,
             internal: true,
             name: "<oxel_main>",

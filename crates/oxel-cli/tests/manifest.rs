@@ -25,6 +25,96 @@ fn successful(output: Output) -> String {
 }
 
 #[test]
+fn namespace_imports_are_file_local_and_emit_clr_namespace_members() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let main = include_str!("../../../examples/namespaces/main.oxel");
+    let geometry = include_str!("../../../examples/namespaces/geometry.oxel");
+    let physics = include_str!("../../../examples/namespaces/physics.oxel");
+    for (file, source) in [
+        ("main.oxel", main),
+        ("geometry.oxel", geometry),
+        ("physics.oxel", physics),
+    ] {
+        fs::write(root.join(file), source).unwrap();
+    }
+    fs::write(
+        root.join("oxel.toml"),
+        include_str!("../../../examples/namespaces/oxel.toml"),
+    )
+    .unwrap();
+    assert_eq!(successful(cli(root, &["run"], false)).trim(), "30");
+
+    let references = oxel::References::default();
+    for (source, code) in [
+        ("namespace App; fn helper() { measure(); }", "E0203"),
+        ("use Geometry::missing; fn helper() {}", "E0352"),
+        (
+            "use Geometry::Point; use Physics::Point; fn helper() {}",
+            "E0352",
+        ),
+        ("namespace Physics; fn area() {}", "E0201"),
+        ("namespace Physics; fn main() {}", "E0206"),
+    ] {
+        let analysis = oxel::inspect_project(&[main, geometry, physics, source], &references);
+        assert_eq!(
+            analysis[3].diagnostics[0].code, code,
+            "{source}: {analysis:?}"
+        );
+    }
+    let source: [std::sync::Arc<str>; 3] = [main.into(), geometry.into(), physics.into()];
+    let mut analyzer = oxel::ProjectAnalyzer::default();
+    let analysis = analyzer.inspect(&source, &references);
+    assert!(analysis.iter().all(|file| file.diagnostics.is_empty()));
+    let call = main.find("measure(Point").unwrap();
+    assert!(analysis[0].occurrences.iter().any(|occurrence| {
+        occurrence.span.start == call && occurrence.definition_source == Some(1)
+    }));
+
+    let bytes = oxel::compile_project_with_kind(
+        &[geometry, physics],
+        "Samples.Modules",
+        &references,
+        oxel::AssemblyKind::Library,
+    )
+    .unwrap();
+    assert_eq!(
+        bytes,
+        oxel::compile_project_with_kind(
+            &[geometry, physics],
+            "Samples.Modules",
+            &references,
+            oxel::AssemblyKind::Library
+        )
+        .unwrap()
+    );
+    fs::write(root.join("Samples.Modules.dll"), bytes).unwrap();
+    let sdk = successful(Command::new("dotnet").arg("--version").output().unwrap());
+    let major = sdk.split('.').next().unwrap();
+    fs::write(root.join("Consumer.csproj"), format!(r#"
+        <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net{major}.0</TargetFramework></PropertyGroup>
+            <ItemGroup><Reference Include="Samples.Modules" HintPath="Samples.Modules.dll" /></ItemGroup>
+        </Project>"#)).unwrap();
+    fs::write(root.join("Consumer.cs"), r#"
+        using Geo = Samples.Modules.Geometry;
+        using Sim = Samples.Modules.Physics;
+        System.Console.WriteLine(Geo.Program.area(new Geo.Point { x = 7 }) + Sim.Program.area(new Sim.Point { x = 12 }));
+    "#).unwrap();
+    assert_eq!(
+        successful(
+            Command::new("dotnet")
+                .current_dir(root)
+                .args(["run", "--project", "Consumer.csproj"])
+                .output()
+                .unwrap()
+        )
+        .trim(),
+        "30"
+    );
+}
+
+#[test]
 fn test_runs_separate_manifest_test_sources_with_framework_references() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();

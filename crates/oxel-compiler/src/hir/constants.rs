@@ -24,7 +24,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-pub(super) type Values<'src> = HashMap<&'src str, Constant>;
+pub(super) type Values<'src> = HashMap<std::borrow::Cow<'src, str>, Constant>;
 const MATERIALIZATION_LIMIT: usize = 100_000;
 const TYPE_SHAPE_LIMIT: usize = 100_000;
 
@@ -289,13 +289,17 @@ pub(super) fn evaluate<'src>(
     }
     let mut names = HashMap::new();
     for (id, declaration) in declarations.iter().enumerate() {
+        let key = module
+            .types
+            .scopes
+            .declaration(declaration.name, declaration.name_span);
         let duplicate = names
-            .insert(declaration.name, id)
+            .insert(key.clone(), id)
             .map(|previous: usize| declarations[previous].name_span)
             .or_else(|| {
                 module
                     .names
-                    .get(declaration.name)
+                    .get(key.as_ref())
                     .map(|&index| module.functions[index].name_span)
             });
         if let Some(previous) = duplicate {
@@ -358,7 +362,11 @@ pub(super) fn evaluate<'src>(
             if let Some(fingerprints) = &mut fingerprints {
                 fingerprints.record(*node, constant.fingerprint());
             }
-            module.constants.insert(declaration.name, constant);
+            let key = module
+                .types
+                .scopes
+                .declaration(declaration.name, declaration.name_span);
+            module.constants.insert(key, constant);
         } else {
             let mut lookups = Vec::new();
             for &node in &group {

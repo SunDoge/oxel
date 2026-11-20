@@ -1,0 +1,3 @@
+[package]
+name = "namespace-demo"
+sources = ["main.oxel", "geometry.oxel", "physics.oxel"]

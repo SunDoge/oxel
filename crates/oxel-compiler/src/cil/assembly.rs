@@ -80,19 +80,44 @@ pub(super) fn write(
     // Keep source method IDs stable. Each synthetic method gets a contiguous
     // range for its immediate children, regardless of nesting depth.
     let mut methods: Vec<_> = program.functions.iter().collect();
+    let mut owners: Vec<_> = program
+        .functions
+        .iter()
+        .map(|function| function.namespace.as_deref())
+        .collect();
     let mut lambda_bases = Vec::new();
     while let Some(function) = methods.get(lambda_bases.len()).copied() {
+        let owner = owners[lambda_bases.len()];
         lambda_bases.push(methods.len());
         methods.extend(&function.lambdas);
+        owners.extend(std::iter::repeat_n(owner, function.lambdas.len()));
     }
     let source_method_count = methods.len();
+    let mut order: Vec<_> = (0..source_method_count).collect();
+    if owners.iter().any(Option::is_some) {
+        order.sort_by_key(|&id| owners[id]);
+    }
+    let mut method_rows = vec![0; source_method_count];
+    let mut namespace_programs = Vec::new();
+    for (index, &id) in order.iter().enumerate() {
+        let row = index as u32 + 1;
+        method_rows[id] = row;
+        if let Some(owner) = owners[id]
+            && namespace_programs
+                .last()
+                .is_none_or(|&(previous, _)| previous != owner)
+        {
+            namespace_programs.push((owner, row));
+        }
+    }
     let method_count = source_method_count
         + methods
             .iter()
             .filter(|method| matches!(method.body, MethodBody::Async(..)))
             .count();
     if method_count >= 0x00ff_ffff
-        || program.structs.len() > 0x00ff_ffff - (FIRST_STRUCT_ROW as usize - 1)
+        || program.structs.len() + namespace_programs.len()
+            > 0x00ff_ffff - (FIRST_STRUCT_ROW as usize - 1)
         || field_count >= 0x00ff_ffff
     {
         return Err(image_too_large());
@@ -101,10 +126,11 @@ pub(super) fn write(
     let narrow_limit = usize::from(u16::MAX);
     if (!program.structs.is_empty() && method_count == narrow_limit)
         || (field_count == narrow_limit
-            && program
-                .structs
-                .last()
-                .is_some_and(|definition| definition.fields.is_empty()))
+            && (!namespace_programs.is_empty()
+                || program
+                    .structs
+                    .last()
+                    .is_some_and(|definition| definition.fields.is_empty())))
     {
         return Err(Diagnostic::new(
             "E0402",
@@ -122,10 +148,17 @@ pub(super) fn write(
         &program.instances,
         tests,
     );
-    metadata.add_structs(&program.structs, namespace, method_count as u32 + 1);
+    metadata.method_rows = method_rows;
+    let first_named_method = namespace_programs
+        .first()
+        .map_or(method_count as u32 + 1, |&(_, row)| row);
+    metadata.add_structs(&program.structs, namespace, first_named_method);
+    for (owner, first_method) in namespace_programs {
+        metadata.add_namespace_program(namespace, owner, first_method);
+    }
     let mut async_steps = Vec::new();
-    for (method_index, (function, lambda_base)) in methods.into_iter().zip(lambda_bases).enumerate()
-    {
+    for (method_index, logical_id) in order.into_iter().enumerate() {
+        let (function, lambda_base) = (methods[logical_id], lambda_bases[logical_id]);
         metadata.add_type_parameters(
             index(TableId::MethodDef, method_index as u32 + 1),
             &function.type_parameters,
@@ -183,13 +216,13 @@ pub(super) fn write(
             parameters.iter().map(|parameter| (parameter.mode(), false)),
         );
         let param_list = metadata.add_parameters(&function.signature, parameters);
-        let (flags, name) = if method_index < program.functions.len() {
+        let (flags, name) = if logical_id < program.functions.len() {
             let access = if function.internal { 0x0003 } else { 0x0006 }; // assembly or public
             (0x0090 | access, metadata.strings.add(function.name)) // static hidebysig
         } else {
             (
                 0x0091,
-                metadata.strings.add(&format!("<lambda_{method_index}>")),
+                metadata.strings.add(&format!("<lambda_{logical_id}>")),
             ) // private static hidebysig
         };
         metadata.methods.push(MethodDefRow {
@@ -215,7 +248,7 @@ pub(super) fn write(
         metadata.methods.push(MethodDefRow {
             rva,
             impl_flags: 0,
-            flags: 0x0091,
+            flags: 0x0093,
             name,
             signature,
             param_list,
@@ -224,11 +257,11 @@ pub(super) fn write(
 
     text.align(4);
     let metadata_offset = CLI_HEADER_SIZE + image_offset(text.len())?;
-    let metadata = metadata.finish()?;
-    let metadata_length = image_offset(metadata.len())?;
     let entry = program
         .entry
-        .map_or(0, |method| METHOD_DEF | (method as u32 + 1));
+        .map_or(0, |method| metadata.source_method_token(method));
+    let metadata = metadata.finish()?;
+    let metadata_length = image_offset(metadata.len())?;
     let mut section = Writer::new();
     section.write_u32(CLI_HEADER_SIZE);
     section.write_u16(2); // minimum CLI major version
@@ -320,6 +353,7 @@ struct GenericParameter {
 }
 
 pub(super) struct Tables<'refs> {
+    method_rows: Vec<u32>,
     strings: StringsHeap,
     blobs: BlobHeap,
     user_strings: Writer,
@@ -474,6 +508,7 @@ impl<'refs> Tables<'refs> {
         let mut user_strings = Writer::new();
         user_strings.write_u8(0); // The empty first heap entry.
         let mut tables = Self {
+            method_rows: Vec::new(),
             strings,
             blobs,
             user_strings,
@@ -563,6 +598,12 @@ impl<'refs> Tables<'refs> {
                 &definition.type_parameters,
                 &definition.bounds,
             );
+            let definition_namespace = definition
+                .namespace
+                .as_deref()
+                .map_or(source_namespace, |owner| {
+                    self.namespace_index(namespace, owner)
+                });
             self.types.push(TypeDefRow {
                 flags: 0x0108 | u32::from(!definition.internal), // sealed, sequential layout
                 type_name,
@@ -577,7 +618,7 @@ impl<'refs> Tables<'refs> {
                         None => self.strings.add(suffix),
                     }
                 } else {
-                    source_namespace
+                    definition_namespace
                 },
                 extends: index(TableId::TypeRef, VALUE_TYPE_REF),
                 field_list: first_field,
@@ -606,6 +647,29 @@ impl<'refs> Tables<'refs> {
                 }
             }
         }
+    }
+
+    fn namespace_index(&mut self, package: Option<&str>, owner: &str) -> u32 {
+        match package {
+            Some(package) => self.strings.add(&format!("{package}.{owner}")),
+            None => self.strings.add(owner),
+        }
+    }
+
+    fn add_namespace_program(&mut self, package: Option<&str>, owner: &str, first_method: u32) {
+        let type_namespace = self.namespace_index(package, owner);
+        self.types.push(TypeDefRow {
+            flags: 0x0181, // public, abstract, sealed
+            type_name: self.strings.add("Program"),
+            type_namespace,
+            extends: index(TableId::TypeRef, 1),
+            field_list: self.fields.len() as u32 + 1,
+            method_list: first_method,
+        });
+    }
+
+    pub(super) fn source_method_token(&self, logical_id: usize) -> u32 {
+        METHOD_DEF | self.method_rows[logical_id]
     }
 
     fn add_native_import(&mut self, method: u32, import: &NativeImport) {

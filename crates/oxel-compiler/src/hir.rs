@@ -10,6 +10,7 @@ mod indexers;
 mod inference;
 mod iteration;
 mod lambdas;
+mod namespaces;
 mod nullability;
 mod test_harness;
 mod unions;
@@ -31,6 +32,7 @@ use hierarchy::DataMember;
 pub(crate) use hierarchy::Member;
 pub(crate) use indexers::IndexUpdate;
 use iteration::local_interface_call;
+use namespaces::{Scopes, path_name};
 
 use crate::{
     ArgumentMode, AssemblyKind, CallableSignature, Diagnostic, DiagnosticFix, Occurrence,
@@ -237,6 +239,7 @@ struct TypeInstances {
 }
 
 pub(crate) struct Struct<'src> {
+    pub namespace: Option<Box<str>>,
     pub internal: bool,
     pub name: &'src str,
     pub builtin: bool,
@@ -273,7 +276,8 @@ impl Struct<'_> {
 
 struct Structs<'src, 'refs> {
     references: &'refs References,
-    names: HashMap<&'src str, usize>,
+    names: HashMap<Cow<'src, str>, usize>,
+    scopes: Scopes<'src>,
     definitions: Vec<Struct<'src>>,
     arities: Vec<usize>,
     instances: RwLock<TypeInstances>,
@@ -287,6 +291,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
     fn collect(
         declarations: &[&syntax::TypeDefinition<'src>],
         references: &'refs References,
+        scopes: Scopes<'src>,
     ) -> Checked<Self> {
         let mut names = HashMap::new();
         for (id, declaration) in declarations.iter().enumerate() {
@@ -299,7 +304,10 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                     format!("reserved type name '{}'", declaration.name),
                 ));
             }
-            if names.insert(declaration.name, id).is_some() {
+            if names
+                .insert(scopes.declaration(declaration.name, declaration.span), id)
+                .is_some()
+            {
                 return Err(Diagnostic::new(
                     "E0201",
                     declaration.span,
@@ -309,11 +317,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         }
         let builtin_option = !names.contains_key("Option");
         if builtin_option {
-            names.insert("Option", declarations.len());
+            names.insert(Cow::Borrowed("Option"), declarations.len());
         }
         let mut types = Self {
             references,
             names,
+            scopes,
             definitions: Vec::new(),
             arities: declarations
                 .iter()
@@ -336,6 +345,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 true,
             )?;
             types.definitions.push(Struct {
+                namespace: types.scopes.namespace(declaration.span).map(Into::into),
                 internal: declaration.internal,
                 name: declaration.name,
                 builtin: false,
@@ -888,17 +898,20 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         }
     }
 
-    fn source_type_name(&self, id: usize) -> &'src str {
+    fn source_type_name(&self, id: usize) -> &str {
         // Struct fields are checked while their definitions are still being collected.
-        self.definitions.get(id).map_or_else(
-            || {
-                self.names
-                    .iter()
-                    .find_map(|(&name, &candidate)| (id == candidate).then_some(name))
-                    .expect("declared source type")
-            },
-            |definition| definition.name,
-        )
+        self.definitions
+            .get(id)
+            .filter(|definition| definition.namespace.is_none())
+            .map_or_else(
+                || {
+                    self.names
+                        .iter()
+                        .find_map(|(name, &candidate)| (id == candidate).then_some(name.as_ref()))
+                        .expect("declared source type")
+                },
+                |definition| definition.name,
+            )
     }
 
     fn describe(&self, ty: Type) -> String {
@@ -973,7 +986,10 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 Type::MethodParameter(index as u16)
             });
         }
-        if let Some(ty) = builtin_type(segments) {
+        let raw = path_name(segments);
+        let expanded = self.scopes.expand(&raw, path.span);
+        let imported_builtin = expanded.strip_prefix("System.").and_then(Type::clr_builtin);
+        if let Some(ty) = builtin_type(segments).or(imported_builtin) {
             if !path.type_arguments.is_empty() {
                 self.check_type_arity(&path.qualified_name(), 0, path)?;
             }
@@ -990,9 +1006,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             self.check_type_arity("compiler.FieldInfo", 0, path)?;
             return Ok(self.field_info_type());
         }
-        if let [(name, _)] = segments
-            && let Some(&id) = self.names.get(name)
-        {
+        if let Some(&id) = self.scopes.lookup(&self.names, &raw, path.span) {
             return self.struct_type(id, path, type_parameters, bounds, from_struct);
         }
         self.imported_type(path, type_parameters, bounds, from_struct)
@@ -1044,7 +1058,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         bounds: Option<&[GenericBound]>,
         from_struct: bool,
     ) -> Checked<Type> {
-        self.check_type_arity(path.segments[0].0, self.arities[id], path)?;
+        self.check_type_arity(&path.qualified_name(), self.arities[id], path)?;
         let arguments = self.type_arguments(path, type_parameters, bounds, from_struct)?;
         if let Some(bounds) = bounds {
             self.check_struct_bounds(
@@ -1088,11 +1102,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
     }
 
     fn resolve_imported_type(&self, path: &Path<'_>, allow_static_class: bool) -> Checked<usize> {
-        let name = path.qualified_name();
+        let raw = path_name(&path.segments);
+        let name = self.scopes.expand(&raw, path.span);
         let key = if path.type_arguments.is_empty() {
             name.clone()
         } else {
-            format!("{name}`{}", path.type_arguments.len())
+            format!("{name}`{}", path.type_arguments.len()).into()
         };
         let mut candidates = self.references.type_candidates(&key, allow_static_class);
         match (candidates.next(), candidates.next()) {
@@ -1137,6 +1152,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
 }
 
 pub(crate) struct Function<'src> {
+    pub namespace: Option<Box<str>>,
     pub has_exception_regions: bool,
     pub internal: bool,
     pub name: &'src str,
@@ -1510,10 +1526,9 @@ pub(crate) fn inspect(
     };
     if let Some(cache) = cache.as_deref_mut() {
         cache.prepare_constants(
-            scope
-                .constants
-                .iter()
-                .map(|(&name, constant)| (name, constant.fingerprint(), constant.definition)),
+            scope.constants.iter().map(|(name, constant)| {
+                (name.as_ref(), constant.fingerprint(), constant.definition)
+            }),
         );
     }
     let mut errors = Vec::new();
@@ -1574,7 +1589,7 @@ fn body_bytes(function: &syntax::Function<'_>) -> usize {
 struct ModuleScope<'ast, 'src, 'refs> {
     types: Structs<'src, 'refs>,
     functions: Vec<&'ast syntax::Function<'src>>,
-    names: HashMap<&'src str, usize>,
+    names: HashMap<Cow<'src, str>, usize>,
     signatures: Vec<Signature>,
     constants: constants::Values<'src>,
     references: &'refs References,
@@ -1604,7 +1619,8 @@ fn prepare<'ast, 'src, 'refs>(
     mut occurrences: Option<&mut Vec<Occurrence>>,
     cache: Option<&mut analysis::BodyCache>,
 ) -> Result<ModuleScope<'ast, 'src, 'refs>, Vec<Diagnostic>> {
-    let types = Structs::collect(&file.types, references).map_err(|error| vec![error])?;
+    let scopes = Scopes::new(&file.scopes).map_err(|error| vec![error])?;
+    let types = Structs::collect(&file.types, references, scopes).map_err(|error| vec![error])?;
     let mut functions = file.functions;
     // Runtime method IDs stay dense even though comptime functions share the
     // module namespace and type checker.
@@ -1613,7 +1629,13 @@ fn prepare<'ast, 'src, 'refs>(
     let mut signatures = Vec::new();
     let mut errors = Vec::new();
     for (index, function) in functions.iter().enumerate() {
-        if names.insert(function.name, index).is_some() {
+        if names
+            .insert(
+                types.scopes.declaration(function.name, function.name_span),
+                index,
+            )
+            .is_some()
+        {
             errors.push(Diagnostic::new(
                 "E0201",
                 function.name_span,
@@ -1639,11 +1661,60 @@ fn prepare<'ast, 'src, 'refs>(
             Err(error) => errors.push(error),
         }
     }
+    for file_scope in file.scopes {
+        for import in &file_scope.imports {
+            let path = import.path.qualified_name();
+            let has_namespace = |name: &str| {
+                name.strip_prefix(&path)
+                    .is_some_and(|rest| rest.starts_with('.'))
+            };
+            let known = names.contains_key(path.as_str())
+                || types.names.contains_key(path.as_str())
+                || names
+                    .keys()
+                    .chain(types.names.keys())
+                    .any(|name| has_namespace(name))
+                || file.constants.iter().any(|constant| {
+                    let name = types.scopes.declaration(constant.name, constant.name_span);
+                    name == path || has_namespace(&name)
+                })
+                || matches!(
+                    path.as_str(),
+                    "System" | "System.Console" | "System.Console.WriteLine"
+                )
+                || path
+                    .strip_prefix("System.")
+                    .and_then(Type::clr_builtin)
+                    .is_some()
+                || references.has_import_path(&path);
+            if !known {
+                errors.push(Diagnostic::new(
+                    "E0352",
+                    import.path.span,
+                    format!("unknown import '{path}'"),
+                ));
+            }
+        }
+    }
     if !errors.is_empty() {
         errors.sort_by_key(|error| error.span.start);
         return Err(errors);
     }
-    let entry = match (entry_point, names.get("main").copied()) {
+    let mut mains = functions
+        .iter()
+        .enumerate()
+        .filter(|(_, function)| function.name == "main");
+    let main = mains.next().map(|(index, _)| index);
+    if !matches!(entry_point, EntryPoint::None)
+        && let Some((_, duplicate)) = mains.next()
+    {
+        return Err(vec![Diagnostic::new(
+            "E0206",
+            duplicate.name_span,
+            "an executable must have one 'main' across its namespaces",
+        )]);
+    }
+    let entry = match (entry_point, main) {
         (EntryPoint::None, _) => None,
         (_, Some(index))
             if !functions[index].comptime
@@ -1960,6 +2031,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             },
         };
         Ok(Function {
+            namespace: types.scopes.namespace(function.name_span).map(Into::into),
             has_exception_regions: checker.has_exception_regions,
             internal: function.internal,
             name: function.name,
@@ -2298,7 +2370,7 @@ pub fn clr_function_signatures(name: &str, references: &References) -> Vec<Calla
     if candidates.is_empty() {
         return Vec::new();
     }
-    let types = Structs::collect(&[], references).expect("no source types");
+    let types = Structs::collect(&[], references, Scopes::default()).expect("no source types");
     candidates
         .iter()
         .filter_map(|&id| {
@@ -2474,7 +2546,7 @@ struct Checker<'a, 'src> {
     async_fn: bool,
     in_test: bool,
     comptime: bool,
-    names: &'a HashMap<&'src str, usize>,
+    names: &'a HashMap<Cow<'src, str>, usize>,
     signatures: &'a [Signature],
     constants: &'a constants::Values<'src>,
     functions: &'a [&'a syntax::Function<'src>],
@@ -3083,18 +3155,9 @@ impl<'a, 'src> Checker<'a, 'src> {
         let setter = match &target.kind {
             Expression::Name(path) => {
                 let (&(name, span), receiver) = path.segments.split_last().expect("nonempty path");
-                if receiver.is_empty() {
-                    let binding = self.binding(name, span).ok_or_else(|| {
-                        if self.constant(name).is_some() {
-                            Diagnostic::new(
-                                "E0204",
-                                span,
-                                format!("constant '{name}' is immutable"),
-                            )
-                        } else {
-                            Diagnostic::new("E0203", span, format!("unknown variable '{name}'"))
-                        }
-                    })?;
+                if receiver.is_empty()
+                    && let Some(binding) = self.binding(name, span)
+                {
                     if !matches!(binding.value, Value::Local(_) | Value::CapturedCell(..)) {
                         let label = if matches!(binding.value, Value::Parameter(_)) {
                             "parameter"
@@ -3136,11 +3199,33 @@ impl<'a, 'src> Checker<'a, 'src> {
                         span,
                     });
                 }
-                if let Some(receiver) = self.path_value(receiver)? {
+                if !receiver.is_empty()
+                    && let Some(receiver) = self.path_value(receiver)?
+                {
                     self.instance_data_member(receiver, name, span, Some(assignment))?
                 } else {
-                    let name = path.qualified_name();
+                    let raw = path_name(&path.segments);
+                    let constant = if receiver.is_empty() {
+                        self.constant(name, span)
+                    } else {
+                        self.types.scopes.lookup(self.constants, &raw, span)
+                    };
+                    if constant.is_some() {
+                        return Err(Diagnostic::new(
+                            "E0204",
+                            span,
+                            format!("constant '{raw}' is immutable"),
+                        ));
+                    }
+                    let name = self.types.scopes.expand(&raw, path.span);
                     let members = self.static_data_members(&name, None);
+                    if members.is_empty() && receiver.is_empty() && !name.contains('.') {
+                        return Err(Diagnostic::new(
+                            "E0203",
+                            span,
+                            format!("unknown variable '{name}'"),
+                        ));
+                    }
                     self.data_member(&name, span, &members, None, Some(assignment))?
                 }
             }
@@ -3184,30 +3269,37 @@ impl<'a, 'src> Checker<'a, 'src> {
         let (first, span) = segments[0];
         let (mut value, fields) = if let Some(value) = self.named_value(first, span)? {
             (value, &segments[1..])
-        } else if let [_, (_, variant_span), fields @ ..] = segments
-            && let Some((kind, ty)) =
-                self.variant_constructor(&segments[..2], &[], &[], expected)?
-        {
-            (
-                Expr {
-                    kind,
-                    ty,
-                    span: Span {
-                        start: span.start,
-                        end: variant_span.end,
-                    },
-                },
-                fields,
-            )
         } else {
-            if segments.len() < 2 {
-                return Ok(None);
-            }
-            let mut qualified = first.to_string();
             let mut root = None;
-            for (index, &(name, span)) in segments.iter().enumerate().skip(1) {
-                qualified.push('.');
-                qualified.push_str(name);
+            for (index, &(name, span)) in segments.iter().enumerate() {
+                let raw = path_name(&segments[..=index]);
+                if index != 0
+                    && let Some(value) = self.constant_value(&raw, name, span)?
+                {
+                    root = Some((value, &segments[index + 1..]));
+                    break;
+                }
+                if index != 0
+                    && let Some((kind, ty)) =
+                        self.variant_constructor(&segments[..=index], &[], &[], expected)?
+                {
+                    root = Some((
+                        Expr {
+                            kind,
+                            ty,
+                            span: Span {
+                                start: segments[0].1.start,
+                                end: span.end,
+                            },
+                        },
+                        &segments[index + 1..],
+                    ));
+                    break;
+                }
+                let qualified = self.types.scopes.expand(&raw, span);
+                if !qualified.contains('.') {
+                    continue;
+                }
                 let members = self.static_data_members(&qualified, None);
                 if !members.is_empty() {
                     root = Some((
@@ -3226,13 +3318,13 @@ impl<'a, 'src> Checker<'a, 'src> {
         Ok(Some(value))
     }
 
-    fn constant(&mut self, name: &'src str) -> Option<&'a constants::Constant> {
+    fn constant(&mut self, name: &'src str, span: Span) -> Option<&'a constants::Constant> {
         // Record misses as well: a new constant can resolve an unknown name or
         // take precedence over a qualified CLR or enum path.
         if let Some(lookups) = &mut self.lookups {
             lookups.push(Lookup::Constant(name));
         }
-        self.constants.get(name)
+        self.types.scopes.lookup(self.constants, name, span)
     }
 
     fn named_value(&mut self, name: &'src str, span: Span) -> Checked<Option<Expr>> {
@@ -3243,17 +3335,24 @@ impl<'a, 'src> Checker<'a, 'src> {
                 span,
             }))
         } else {
-            let Some(constant) = self.constant(name) else {
+            if self.constant(name, span).is_none() {
                 return Ok(None);
-            };
-            self.record(
-                span,
-                Some(constant.definition),
-                OccurrenceKind::Constant,
-                || constant.detail(name),
-            );
-            constant.expression(self, span).map(Some)
+            }
+            self.constant_value(name, name, span)
         }
+    }
+
+    fn constant_value(&mut self, path: &str, name: &str, span: Span) -> Checked<Option<Expr>> {
+        let Some(constant) = self.types.scopes.lookup(self.constants, path, span) else {
+            return Ok(None);
+        };
+        self.record(
+            span,
+            Some(constant.definition),
+            OccurrenceKind::Constant,
+            || constant.detail(name),
+        );
+        constant.expression(self, span).map(Some)
     }
 
     fn track_constant_type(&mut self, ty: Type) {
@@ -3898,10 +3997,11 @@ impl<'a, 'src> Checker<'a, 'src> {
     ) -> Checked<(ExprKind, Type)> {
         let name = path.segments[0].0;
         self.track_source_type(name);
-        let id =
-            *self.types.names.get(name).ok_or_else(|| {
-                Diagnostic::new("E0202", span, format!("unknown struct '{name}'"))
-            })?;
+        let id = *self
+            .types
+            .scopes
+            .lookup(&self.types.names, &path_name(&path.segments), span)
+            .ok_or_else(|| Diagnostic::new("E0202", span, format!("unknown struct '{name}'")))?;
         let types = self.types;
         let definition = &types.definitions[id];
         if definition.union.is_some() {
@@ -4711,12 +4811,17 @@ impl<'a, 'src> Checker<'a, 'src> {
         }
         // Remember unsuccessful name lookups as well. A later declaration
         // can turn an unknown unqualified call into a valid local call.
-        let mut named_function = None;
+        let raw = path_name(&path.segments);
+        let named_function = self
+            .types
+            .scopes
+            .lookup(self.names, &raw, path.span)
+            .copied();
+        let qualified = self.types.scopes.expand(&raw, path.span);
         if let [(name, span)] = path.segments.as_slice() {
             if let Some(lookups) = &mut self.lookups {
                 lookups.push(Lookup::Function(name));
             }
-            named_function = self.names.get(name).copied();
             if *name != "assert"
                 && named_function.is_none()
                 && let Some(binding) = self.binding(name, *span)
@@ -4740,7 +4845,7 @@ impl<'a, 'src> Checker<'a, 'src> {
             [("assert", _)] if named_function.is_none() => {
                 return self.assertion(path.span, type_arguments, args);
             }
-            [("System", _), ("Console", _), ("WriteLine", _)] => {
+            _ if named_function.is_none() && qualified == "System.Console.WriteLine" => {
                 if !type_arguments.is_empty() {
                     return Err(Diagnostic::new(
                         "E0205",
@@ -4802,7 +4907,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                 }
                 (Target::WriteLine(overload), typed, Type::Void)
             }
-            [(name, span)] if named_function.is_some() => {
+            [.., (name, span)] if named_function.is_some() => {
                 let index = named_function.expect("named function");
                 let signature = &self.signatures[index];
                 let declaration = &self.functions[index];
@@ -4907,17 +5012,14 @@ impl<'a, 'src> Checker<'a, 'src> {
                     result,
                 )
             }
-            _ => {
-                let name = path.qualified_name();
-                self.external_call(
-                    &name,
-                    path.span,
-                    &Member::direct(self.references.candidates(&name)),
-                    type_arguments,
-                    args,
-                    None,
-                )?
-            }
+            _ => self.external_call(
+                &qualified,
+                path.span,
+                &Member::direct(self.references.candidates(&qualified)),
+                type_arguments,
+                args,
+                None,
+            )?,
         };
         Ok(self.call_result(target, args, result))
     }

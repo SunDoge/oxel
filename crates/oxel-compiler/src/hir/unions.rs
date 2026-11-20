@@ -29,6 +29,7 @@ struct Variant<'src> {
 pub(super) fn builtin_option() -> Struct<'static> {
     let span = Span::default();
     Struct {
+        namespace: None,
         internal: false,
         name: "Option",
         builtin: true,
@@ -270,12 +271,17 @@ impl<'src> Checker<'_, 'src> {
         args: &[syntax::Expr<'src>],
         expected: Option<Type>,
     ) -> Checked<Option<(ExprKind, Type)>> {
-        let &[(owner, owner_span), (name, name_span)] = segments else {
+        let [owner_segments @ .., (name, name_span)] = segments else {
             return Ok(None);
         };
-        self.track_source_type(owner);
+        let Some(&(first, owner_span)) = owner_segments.first() else {
+            return Ok(None);
+        };
+        let owner = super::path_name(owner_segments);
+        self.track_source_type(first);
+        let (name, name_span) = (*name, *name_span);
         let types = self.types;
-        let Some(&id) = types.names.get(owner) else {
+        let Some(&id) = types.scopes.lookup(&types.names, &owner, owner_span) else {
             return Ok(None);
         };
         let definition = &types.definitions[id];

@@ -111,6 +111,7 @@ pub(super) fn runner<'src>(
         Type::Void,
     )));
     Function {
+        namespace: None,
         has_exception_regions: count != 0,
         internal: true,
         name: "<oxel_test_main>",
