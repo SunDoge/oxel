@@ -3,6 +3,8 @@ name = "oxel-compiler"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+license-file.workspace = true
 description = "Compiler and incremental analysis engine for the CLR-native oxel language"
 
 [dependencies]
