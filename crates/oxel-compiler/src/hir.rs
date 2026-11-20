@@ -3806,7 +3806,11 @@ impl<'a, 'src> Checker<'a, 'src> {
             self.record(
                 field_span,
                 Some(info.span),
-                OccurrenceKind::Field { readonly: true },
+                if field_span == value.span {
+                    OccurrenceKind::ShorthandField
+                } else {
+                    OccurrenceKind::Field { readonly: true }
+                },
                 || {
                     format!(
                         "{name}: {}",

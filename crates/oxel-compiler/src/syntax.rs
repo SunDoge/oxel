@@ -529,7 +529,16 @@ pub(crate) enum TypeSuffix {
     Array(Span),
 }
 
-impl Path<'_> {
+impl<'src> Path<'src> {
+    fn single(name: &'src str, span: Span) -> Self {
+        Self {
+            segments: vec![(name, span)],
+            span,
+            type_arguments: Vec::new(),
+            suffixes: Vec::new(),
+        }
+    }
+
     pub fn head_span(&self) -> Span {
         Span {
             start: self.span.start,
@@ -1719,15 +1728,7 @@ impl<'src> Parser<'src> {
             let pattern = pattern.unwrap_or_else(|| {
                 let (name, span) = binding.expect("simple name pattern");
                 Pattern {
-                    kind: PatternKind::Name(
-                        Path {
-                            segments: vec![(name, span)],
-                            span,
-                            type_arguments: Vec::new(),
-                            suffixes: Vec::new(),
-                        },
-                        None,
-                    ),
+                    kind: PatternKind::Name(Path::single(name, span), None),
                     span,
                 }
             });
@@ -2152,8 +2153,15 @@ impl<'src> Parser<'src> {
                             break;
                         }
                         let (name, span) = self.name()?;
-                        self.expect(Colon, "':'")?;
-                        fields.push((name, span, self.pattern(depth + 2)?));
+                        let child = if self.take(Colon).is_some() {
+                            self.pattern(depth + 2)?
+                        } else {
+                            Pattern {
+                                kind: PatternKind::Name(Path::single(name, span), None),
+                                span,
+                            }
+                        };
+                        fields.push((name, span, child));
                         if self.take(Comma).is_none() {
                             break;
                         }
@@ -2302,8 +2310,16 @@ impl<'src> Parser<'src> {
                         break;
                     }
                     let (name, span) = self.name()?;
-                    self.expect(Colon, "':'")?;
-                    fields.push((name, span, self.expression(0, depth)?));
+                    let value = if self.take(Colon).is_some() {
+                        self.expression(0, depth)?
+                    } else {
+                        Expr {
+                            kind: Expression::Name(Path::single(name, span)),
+                            span,
+                            depth: 1,
+                        }
+                    };
+                    fields.push((name, span, value));
                     if self.take(Comma).is_none() {
                         break;
                     }

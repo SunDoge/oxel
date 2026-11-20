@@ -4,7 +4,7 @@ use lsp_server::ErrorCode;
 use lsp_types::{
     PrepareRenameResponse, RenameParams, TextDocumentPositionParams, TextEdit, Uri, WorkspaceEdit,
 };
-use oxel::{Occurrence, Span, SymbolKind, inspect_project, valid_identifier};
+use oxel::{Occurrence, OccurrenceKind, Span, SymbolKind, inspect_project, valid_identifier};
 
 use super::{Session, document::Document};
 
@@ -47,7 +47,7 @@ impl<'a> SymbolOccurrences<'a> {
     pub(super) fn matching(
         &self,
         include_declaration: bool,
-    ) -> impl Iterator<Item = (&'a Uri, &'a Document, Span)> + '_ {
+    ) -> impl Iterator<Item = (&'a Uri, &'a Document, &'a Occurrence)> + '_ {
         self.files
             .iter()
             .enumerate()
@@ -59,7 +59,7 @@ impl<'a> SymbolOccurrences<'a> {
                     .filter_map(move |item| {
                         let matches = (!item.is_declaration || include_declaration)
                             && BindingSite::of(file, item) == Some(self.binding);
-                        matches.then_some((uri, document, item.span))
+                        matches.then_some((uri, document, item))
                     })
             })
     }
@@ -182,21 +182,40 @@ impl Session<'_> {
             }
         }
 
-        let mut sites = HashMap::<&str, Vec<Span>>::new();
-        for (file, document, span) in symbol.matching(true) {
+        let mut sites = HashMap::<&str, Vec<(Span, Replacement)>>::new();
+        for (file, document, item) in symbol.matching(true) {
+            let span = item.span;
             if document.text.get(span.start..span.end) != Some(old_name) {
                 return Err(rejected("The symbol has a reference that cannot be edited"));
             }
-            sites.entry(file.as_str()).or_default().push(span);
+            let replacement = if item.kind == OccurrenceKind::ShorthandField {
+                Replacement::Field
+            } else {
+                let occurrences = &document.analysis.occurrences;
+                let first = occurrences.partition_point(|item| item.span.start < span.start);
+                if occurrences[first..]
+                    .iter()
+                    .take_while(|item| item.span.start == span.start)
+                    .any(|item| item.span == span && item.kind == OccurrenceKind::ShorthandField)
+                {
+                    Replacement::Binding
+                } else {
+                    Replacement::Name
+                }
+            };
+            sites
+                .entry(file.as_str())
+                .or_default()
+                .push((span, replacement));
         }
         let revised = symbol
             .files
             .iter()
             .map(|&(file, document)| {
                 let mut spans = sites.remove(file.as_str()).unwrap_or_default();
-                spans.sort_unstable_by_key(|span| (span.start, span.end));
+                spans.sort_unstable_by_key(|(span, _)| (span.start, span.end));
                 spans.dedup();
-                RevisedDocument::new(document, spans, new_name)
+                RevisedDocument::new(document, spans, old_name, new_name)
             })
             .collect::<Vec<_>>();
         let sources = revised
@@ -217,11 +236,14 @@ impl Session<'_> {
             // another's uses. Compare definition links after translating their spans.
             let expected = occurrence_keys(
                 original.analysis.occurrences.iter(),
-                |span| updated.translate(span),
-                |site| revised[site.file].translate(site.span),
+                |item| updated.translate(item.span, item.kind == OccurrenceKind::ShorthandField),
+                |site| revised[site.file].translate(site.span, false),
             );
-            let actual =
-                occurrence_keys(analysis.occurrences.iter(), |span| span, |site| site.span);
+            let actual = occurrence_keys(
+                analysis.occurrences.iter(),
+                |item| item.span,
+                |site| site.span,
+            );
             if expected != actual {
                 return Err(rejected(
                     "Rename would change which declaration a reference resolves to",
@@ -238,7 +260,7 @@ impl Session<'_> {
                     .iter()
                     .map(|edit| TextEdit {
                         range: document.range(edit.span),
-                        new_text: new_name.clone(),
+                        new_text: updated.text[edit.new_start..edit.new_end].to_owned(),
                     })
                     .collect();
                 (!edits.is_empty()).then_some((file.clone(), document.version, edits))
@@ -247,9 +269,18 @@ impl Session<'_> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Replacement {
+    Name,
+    Field,
+    Binding,
+}
+
 struct Edit {
     span: Span,
+    new_start: usize,
     new_end: usize,
+    field_end: Option<usize>,
 }
 
 struct RevisedDocument {
@@ -258,16 +289,41 @@ struct RevisedDocument {
 }
 
 impl RevisedDocument {
-    fn new(document: &Document, spans: Vec<Span>, new_name: &str) -> Self {
+    fn new(
+        document: &Document,
+        spans: Vec<(Span, Replacement)>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Self {
         let mut text = String::with_capacity(document.text.len());
         let mut cursor = 0;
         let mut edits = Vec::with_capacity(spans.len());
-        for span in spans {
+        for (span, replacement) in spans {
             text.push_str(&document.text[cursor..span.start]);
-            text.push_str(new_name);
+            let new_start = text.len();
+            let field_end = match replacement {
+                Replacement::Name => {
+                    text.push_str(new_name);
+                    None
+                }
+                Replacement::Field | Replacement::Binding => {
+                    let (field, value) = if replacement == Replacement::Field {
+                        (new_name, old_name)
+                    } else {
+                        (old_name, new_name)
+                    };
+                    text.push_str(field);
+                    let field_end = text.len();
+                    text.push_str(": ");
+                    text.push_str(value);
+                    Some(field_end)
+                }
+            };
             edits.push(Edit {
                 span,
+                new_start,
                 new_end: text.len(),
+                field_end,
             });
             cursor = span.end;
         }
@@ -275,7 +331,25 @@ impl RevisedDocument {
         Self { text, edits }
     }
 
-    fn translate(&self, span: Span) -> Span {
+    fn translate(&self, span: Span, shorthand_field: bool) -> Span {
+        let index = self
+            .edits
+            .partition_point(|edit| edit.span.start < span.start);
+        if let Some(edit) = self.edits.get(index).filter(|edit| edit.span == span)
+            && let Some(field_end) = edit.field_end
+        {
+            return if shorthand_field {
+                Span {
+                    start: edit.new_start,
+                    end: field_end,
+                }
+            } else {
+                Span {
+                    start: field_end + ": ".len(),
+                    end: edit.new_end,
+                }
+            };
+        }
         let offset = |offset| {
             let count = self.edits.partition_point(|edit| edit.span.end <= offset);
             if count == 0 {
@@ -296,14 +370,14 @@ type OccurrenceKey = ((usize, usize), bool, Option<(usize, (usize, usize))>);
 
 fn occurrence_keys<'a>(
     occurrences: impl Iterator<Item = &'a Occurrence>,
-    occurrence_span: impl Fn(Span) -> Span,
+    occurrence_span: impl Fn(&Occurrence) -> Span,
     definition_span: impl Fn(BindingSite) -> Span,
 ) -> Vec<OccurrenceKey> {
     let span_key = |span: Span| (span.start, span.end);
     let mut keys = occurrences
         .map(|item| {
             (
-                span_key(occurrence_span(item.span)),
+                span_key(occurrence_span(item)),
                 item.is_declaration,
                 BindingSite::reference(item)
                     .map(|site| (site.file, span_key(definition_span(site)))),

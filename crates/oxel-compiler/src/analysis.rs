@@ -57,6 +57,8 @@ pub enum OccurrenceKind {
     Field {
         readonly: bool,
     },
+    /// Field reference sharing a token with a local or constant in struct shorthand.
+    ShorthandField,
     Property,
     Event,
     Operator,

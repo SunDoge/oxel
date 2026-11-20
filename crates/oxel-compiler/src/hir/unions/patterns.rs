@@ -775,7 +775,11 @@ impl<'src> Checker<'_, 'src> {
                     self.record(
                         span,
                         definition.source_span(info.span),
-                        OccurrenceKind::Field { readonly: true },
+                        if span == child.span {
+                            OccurrenceKind::ShorthandField
+                        } else {
+                            OccurrenceKind::Field { readonly: true }
+                        },
                         || format!("{name}: {}", describe_scoped(types, parameters, field_type)),
                     );
                     let projection = places.field(place, field, field_type);

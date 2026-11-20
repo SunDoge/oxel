@@ -77,7 +77,7 @@ impl Token {
             OccurrenceKind::Property => (SemanticTokenType::PROPERTY, 0),
             OccurrenceKind::Event => (SemanticTokenType::EVENT, 0),
             OccurrenceKind::Operator => (SemanticTokenType::OPERATOR, 0),
-            OccurrenceKind::Constructor => return None,
+            OccurrenceKind::Constructor | OccurrenceKind::ShorthandField => return None,
         };
         let mut span = item.span;
         if item.kind != OccurrenceKind::Operator {

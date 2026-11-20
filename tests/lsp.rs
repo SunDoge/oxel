@@ -1252,6 +1252,47 @@ fn project_rename_uses_unsaved_buffers_and_versions_across_closed_files() {
 }
 
 #[test]
+fn rename_expands_struct_shorthand_and_preserves_the_other_binding() {
+    let mut client = Client::start(true, None);
+    let uri = "file:///virtual/struct-shorthand.oxel";
+    let lines = [
+        "struct Panel { title: string }",
+        "fn make(title: string) -> Panel { Panel { title } }",
+        "fn read(panel: Panel) -> string { let Panel { title } = panel; title }",
+    ];
+    client.open(uri, &lines.join("\n"));
+    assert_eq!(client.diagnostics()["diagnostics"], json!([]));
+
+    for (line, new_name, expected) in [
+        (
+            0,
+            "caption",
+            vec!["caption", "caption: title", "caption: title"],
+        ),
+        (1, "name", vec!["name", "title: name"]),
+        (2, "label", vec!["title: label", "label"]),
+    ] {
+        let result = client.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": line, "character": lines[line].find("title").unwrap()},
+                "newName": new_name,
+            }),
+        );
+        let edits = result["changes"][uri]
+            .as_array()
+            .unwrap_or_else(|| panic!("{result}"));
+        let replacements: Vec<_> = edits
+            .iter()
+            .map(|edit| edit["newText"].as_str().unwrap())
+            .collect();
+        assert_eq!(replacements, expected);
+    }
+    client.finish();
+}
+
+#[test]
 fn rename_follows_constructed_source_types_and_enum_patterns() {
     let mut client = Client::start(true, None);
     let uri = "file:///virtual/generic-rename.oxel";

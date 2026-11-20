@@ -623,7 +623,9 @@ impl Session<'_> {
         Some(
             symbol
                 .matching(params.context.include_declaration)
-                .map(|(file, document, span)| Location::new(file.clone(), document.range(span)))
+                .map(|(file, document, item)| {
+                    Location::new(file.clone(), document.range(item.span))
+                })
                 .collect(),
         )
     }

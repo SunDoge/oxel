@@ -272,6 +272,8 @@ Use `Window { title: "Settings", ..original }` to construct a copy with selected
 
 Use `let Window { title: name, .. } = window;` to bind a field from a struct. A field pattern can itself bind a value, test a literal, or destructure a nested struct or enum. List every field or use a final `..` to ignore the remaining fields. Generic arguments come from the scrutinee type. An ordinary `let` pattern must cover every value of its type. Use `let … else`, `if let`, `while let` or `match` for patterns that can fail. [Nested struct example](examples/struct_update.oxel)
 
+Use `title` as shorthand for `title: title` in both literals and patterns. At that token, editor navigation selects the variable. Renaming either the field or variable expands the shorthand when needed so the other name keeps its meaning.
+
 ### Generic structs
 
 ```rust

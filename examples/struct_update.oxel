@@ -9,14 +9,15 @@ struct Window {
 }
 
 fn main() {
+    let title = "Oxel";
     let original = Window {
-        title: "Oxel",
+        title,
         layout: Layout { width: 640, height: 480 },
     };
-    let wider = Layout { width: 800, ..original.layout };
-    let updated = Window { layout: wider, ..original };
+    let layout = Layout { width: 800, ..original.layout };
+    let updated = Window { layout, ..original };
 
-    let Window { title: title, layout: Layout { width: width, .. } } = updated;
+    let Window { title, layout: Layout { width, .. } } = updated;
     System.Console.WriteLine(title);
     System.Console.WriteLine(width);
     System.Console.WriteLine(original.layout.width);
