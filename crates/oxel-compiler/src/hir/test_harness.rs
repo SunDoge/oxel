@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{Diagnostic, Span, syntax};
 
-pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>]) -> Function<'src> {
+pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>], filter: &str) -> Function<'src> {
     let span = Span::default();
     let expr = |kind, ty| Expr { kind, ty, span };
     let integer = |number| expr(ExprKind::Integer(number), Type::I32);
@@ -27,7 +27,11 @@ pub(super) fn runner<'src>(functions: &[&syntax::Function<'src>]) -> Function<'s
     };
     let mut statements = vec![save_failures(integer(0))];
     let mut count = 0;
-    for (index, test) in functions.iter().enumerate().filter(|(_, test)| test.test) {
+    for (index, test) in functions
+        .iter()
+        .enumerate()
+        .filter(|(_, test)| test.test && test.name.contains(filter))
+    {
         count += 1;
         let call = expr(
             ExprKind::Call(Target::Function(index, Box::new([])), Vec::new()),

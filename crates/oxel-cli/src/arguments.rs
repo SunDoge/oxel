@@ -41,7 +41,7 @@ enum Command {
     /// Compile and run on CoreCLR.
     Run(RunInputs),
     /// Compile and run Oxel unit tests on CoreCLR.
-    Test(BuildInputs),
+    Test(TestInputs),
     /// Publish a native executable with the .NET SDK.
     Publish(BuildInputs),
     /// Restore SDK dependencies and write the NuGet lock file.
@@ -69,6 +69,15 @@ struct RunInputs {
 }
 
 #[derive(Args)]
+struct TestInputs {
+    #[usage(flatten)]
+    build: BuildInputs,
+    /// Run only tests whose names contain this case-sensitive text.
+    #[usage(long)]
+    filter: Option<String>,
+}
+
+#[derive(Args)]
 struct RestoreInputs {
     /// Restore the Native AOT graph.
     #[usage(long)]
@@ -85,12 +94,11 @@ struct EditorInputs {
     source: Vec<PathBuf>,
 }
 
-#[derive(Clone, Copy)]
 pub(super) enum Action {
     Compile,
     Check,
     Run,
-    Test,
+    Test(Option<String>),
     Publish,
     Restore,
     Lsp,
@@ -147,7 +155,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
             arguments = run.arguments;
             (Action::Run, run.build)
         }
-        Command::Test(build) => (Action::Test, build),
+        Command::Test(test) => (Action::Test(test.filter), test.build),
         Command::Publish(build) => {
             native = true;
             (Action::Publish, build)

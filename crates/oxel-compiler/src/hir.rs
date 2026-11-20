@@ -211,7 +211,7 @@ pub(crate) struct Program<'src> {
     pub instances: Vec<TypeInstance>,
     pub entry: Option<usize>,
     pub kind: AssemblyKind,
-    pub tests: bool,
+    pub test_filter: Option<Box<str>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1423,12 +1423,12 @@ pub(crate) fn lower<'src>(
     mut file: syntax::Module<'_, 'src>,
     references: &References,
     kind: AssemblyKind,
-    tests: bool,
+    test_filter: Option<&str>,
 ) -> Result<Program<'src>, Vec<Diagnostic>> {
-    if !tests {
+    if test_filter.is_none() {
         file.functions.retain(|function| !function.test);
     }
-    let mode = if tests {
+    let mode = if test_filter.is_some() {
         EntryPoint::None
     } else {
         EntryPoint::for_build(kind)
@@ -1436,8 +1436,8 @@ pub(crate) fn lower<'src>(
     let scope = prepare(file, references, mode, None, None)?;
     let mut functions = Vec::with_capacity(scope.runtime_functions().len());
     scope.check_runtime(std::convert::identity, |function| functions.push(function))?;
-    let entry = if tests {
-        let runner = test_harness::runner(scope.runtime_functions());
+    let entry = if let Some(filter) = test_filter {
+        let runner = test_harness::runner(scope.runtime_functions(), filter);
         let entry = functions.len();
         functions.push(runner);
         Some(entry)
@@ -1469,7 +1469,7 @@ pub(crate) fn lower<'src>(
         instances,
         entry,
         kind,
-        tests,
+        test_filter: test_filter.map(Into::into),
     })
 }
 

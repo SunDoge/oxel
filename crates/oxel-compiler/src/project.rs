@@ -59,7 +59,7 @@ pub fn compile_project_with_kind(
     references: &References,
     kind: AssemblyKind,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
-    compile(sources, assembly_name, references, kind, false)
+    compile(sources, assembly_name, references, kind, None)
 }
 
 /// Compiles source and annotated tests with a synthetic entry point.
@@ -69,7 +69,18 @@ pub fn compile_test_project(
     references: &References,
     kind: AssemblyKind,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
-    compile(sources, assembly_name, references, kind, true)
+    compile_test_project_filtered(sources, assembly_name, references, kind, "")
+}
+
+/// Checks the whole test module and runs tests whose names contain `filter`.
+pub fn compile_test_project_filtered(
+    sources: &[&str],
+    assembly_name: &str,
+    references: &References,
+    kind: AssemblyKind,
+    filter: &str,
+) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
+    compile(sources, assembly_name, references, kind, Some(filter))
 }
 
 fn compile(
@@ -77,10 +88,10 @@ fn compile(
     assembly_name: &str,
     references: &References,
     kind: AssemblyKind,
-    tests: bool,
+    test_filter: Option<&str>,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
     let project = Project::new(sources);
-    let program = project.analyze(|module| hir::lower(module, references, kind, tests))?;
+    let program = project.analyze(|module| hir::lower(module, references, kind, test_filter))?;
     cil::emit(&program, sources, assembly_name, references)
         .map_err(|error| vec![project.map.locate(error)])
 }

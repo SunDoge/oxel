@@ -73,6 +73,8 @@ fn adds_positive_numbers() {
 
 Run `oxel test examples/unit_tests.oxel`, or run `oxel test` in a directory with `oxel.toml`. Tests share the module with production functions and can call internal helpers. The runner executes tests in source order on CoreCLR, reports exceptions per test, and exits with status 1 if any fail. A test run can use a library or a module without `main`. Normal builds omit test functions. [Runnable unit tests](examples/unit_tests.oxel)
 
+Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names contain `adds`. Matching is case-sensitive and the compiler checks the whole test module before running the selected tests.
+
 ## Project manifest
 
 ```toml

@@ -44,15 +44,16 @@ fn unit_tests_run_in_order_and_fail_independently_of_main() {
     "#,
     )
     .unwrap();
-    let run = |action| {
+    let run = |action, flags: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_oxel"))
             .current_dir(directory)
             .arg(action)
+            .args(flags)
             .args([&main, &tests])
             .output()
             .unwrap()
     };
-    let result = run("test");
+    let result = run("test", &[]);
     assert_eq!(result.status.code(), Some(1));
     let output = String::from_utf8(result.stdout).unwrap();
     assert!(
@@ -66,11 +67,24 @@ fn unit_tests_run_in_order_and_fail_independently_of_main() {
     assert!(output.contains("System.DivideByZeroException"), "{output}");
     assert!(output.ends_with("3 tests, 2 failed\n"), "{output}");
     assert!(!output.contains("eager message"), "{output}");
-    assert_eq!(stdout(run("run")), "42\n");
+    assert_eq!(stdout(run("run", &[])), "42\n");
+    assert_eq!(
+        stdout(run("test", &["--filter", "tinue"])),
+        "ok continues\n1 test, 0 failed\n",
+    );
+    assert_eq!(
+        stdout(run("test", &["--filter", "CONTINUES"])),
+        "0 tests, 0 failed\n",
+    );
+    let selected_failure = run("test", &["--filter=fails"]);
+    assert_eq!(selected_failure.status.code(), Some(1));
+    let output = String::from_utf8(selected_failure.stdout).unwrap();
+    assert!(output.starts_with("FAIL fails\n"), "{output}");
+    assert!(output.ends_with("1 test, 1 failed\n"), "{output}");
 
     fs::write(&tests, "#[test] fn broken() { unknown(); }").unwrap();
-    assert_eq!(stdout(run("run")), "42\n");
-    let rejected = run("test");
+    assert_eq!(stdout(run("run", &[])), "42\n");
+    let rejected = run("test", &["--filter", "does_not_match"]);
     assert!(!rejected.status.success());
     let error = String::from_utf8(rejected.stderr).unwrap();
     assert!(

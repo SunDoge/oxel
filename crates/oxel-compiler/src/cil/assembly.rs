@@ -114,7 +114,7 @@ pub(super) fn write(
         sources,
         references,
         &program.instances,
-        program.tests,
+        program.test_filter.as_deref(),
     );
     metadata.add_structs(&program.structs, namespace, method_count as u32 + 1);
     for (method_index, (function, lambda_base)) in methods.into_iter().zip(lambda_bases).enumerate()
@@ -321,7 +321,7 @@ impl<'refs> Tables<'refs> {
         sources: &[&str],
         externals: &'refs References,
         instances: &'refs [TypeInstance],
-        tests: bool,
+        test_filter: Option<&str>,
     ) -> Self {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
@@ -332,8 +332,13 @@ impl<'refs> Tables<'refs> {
         if namespace.is_some() {
             hash.update(b"library\0");
         }
-        if tests {
+        if let Some(filter) = test_filter {
             hash.update(b"tests\0");
+            if !filter.is_empty() {
+                hash.update(b"filter\0");
+                hash.update(&(filter.len() as u64).to_le_bytes());
+                hash.update(filter.as_bytes());
+            }
         }
         hash.update(&(sources.len() as u64).to_le_bytes());
         for source in sources {

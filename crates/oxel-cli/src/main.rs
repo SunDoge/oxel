@@ -145,7 +145,7 @@ fn cli(run: &mut Run) -> ExitCode {
             } else {
                 None
             };
-        let runtime_kind = if matches!(action, Action::Test) {
+        let runtime_kind = if matches!(action, Action::Test(_)) {
             AssemblyKind::Executable
         } else {
             kind
@@ -277,12 +277,17 @@ fn execute(
         };
         (path.as_path(), Path::new(""), name)
     };
-    let compile = if matches!(action, Action::Test) {
-        oxel::compile_test_project
-    } else {
-        oxel::compile_project_with_kind
+    let compiled = match &action {
+        Action::Test(filter) => oxel::compile_test_project_filtered(
+            &sources,
+            name,
+            &references,
+            kind,
+            filter.as_deref().unwrap_or_default(),
+        ),
+        _ => oxel::compile_project_with_kind(&sources, name, &references, kind),
     };
-    let bytes = match compile(&sources, name, &references, kind) {
+    let bytes = match compiled {
         Ok(bytes) => bytes,
         Err(errors) => return format.report(paths, &sources, errors),
     };
@@ -301,7 +306,7 @@ fn execute(
             return format.error(origin, "E0004", error.to_string());
         }
         match action {
-            Action::Run | Action::Test => {
+            Action::Run | Action::Test(_) => {
                 return run_dll(
                     origin,
                     &output.join(format!("{name}.dll")),
@@ -340,7 +345,7 @@ fn execute(
         }
     }
 
-    if matches!(action, Action::Run | Action::Test) {
+    if matches!(action, Action::Run | Action::Test(_)) {
         return run(
             origin,
             name,
