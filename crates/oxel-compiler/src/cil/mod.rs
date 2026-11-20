@@ -43,6 +43,8 @@ const STRING_CONCAT: u32 = MEMBER_REF | (WRITE_LINE_OVERLOADS.len() as u32 + 1);
 const STRING_EQUALITY: u32 = MEMBER_REF | (WRITE_LINE_OVERLOADS.len() as u32 + 2);
 const INVALID_OPERATION_CTOR: u32 = MEMBER_REF | (WRITE_LINE_OVERLOADS.len() as u32 + 3);
 const STRING_LENGTH: u32 = INVALID_OPERATION_CTOR + 1;
+const ASSERTION_EXCEPTION_CTOR: u32 = INVALID_OPERATION_CTOR + 3;
+const BASE_EXCEPTION: u32 = 0x0100_0006;
 const STRING_INDEX: u32 = STRING_LENGTH + 1;
 const USER_STRING: u32 = 0x7000_0000;
 
@@ -789,6 +791,10 @@ impl<'a, 'refs> Body<'a, 'refs> {
                         return;
                     }
                     Target::DefaultConstructor(ty) => self.metadata.default_constructor(*ty),
+                    Target::AssertionException => {
+                        self.token_instruction(0x73, ASSERTION_EXCEPTION_CTOR); // newobj
+                        return;
+                    }
                     Target::WriteLine(ty) => {
                         let index = WRITE_LINE_OVERLOADS
                             .iter()
@@ -999,7 +1005,9 @@ impl<'a, 'refs> Body<'a, 'refs> {
             if arm.body.ty != Type::Never {
                 ends.push(self.leave_exception_region(region.result, ty));
             }
-            let class = self.metadata.runtime_type_token(arm.ty);
+            let class = arm
+                .ty
+                .map_or(BASE_EXCEPTION, |ty| self.metadata.runtime_type_token(ty));
             clauses.push(ExceptionClause {
                 protected: protected.clone(),
                 handler: start..self.code.len(),

@@ -394,6 +394,7 @@ fn initializer<'src>(
     let types = &module.types;
     let mut lookups = Vec::new();
     let mut checker = Checker {
+        in_test: false,
         comptime: true,
         names: &module.names,
         functions: &module.functions,

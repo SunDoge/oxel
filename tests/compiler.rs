@@ -10,6 +10,92 @@ use oxel::Type;
 const HELLO: &str = include_str!("../examples/hello.oxel");
 
 #[test]
+fn unit_tests_run_in_order_and_fail_independently_of_main() {
+    let folder = tempfile::tempdir().unwrap();
+    let directory = folder.path();
+    let sample = directory.join("sample.oxel");
+    fs::write(&sample, include_str!("../examples/unit_tests.oxel")).unwrap();
+    assert_eq!(
+        stdout(cli(directory, "test", &sample)),
+        "ok adds_positive_numbers\nok zero_is_the_additive_identity\n2 tests, 0 failed\n",
+    );
+
+    let main = directory.join("main.oxel");
+    let tests = directory.join("tests.oxel");
+    fs::write(
+        &main,
+        "fn main() { System.Console.WriteLine(42); } internal fn value() -> i32 { 42 }",
+    )
+    .unwrap();
+    fs::write(
+        &tests,
+        r#"
+        #[test]
+        fn fails() { assert(value() == 30, "wrong result"); }
+        #[test]
+        fn continues() {
+            assert(value() == 42, { System.Console.WriteLine("eager message"); "wrong result" });
+        }
+        #[test]
+        fn catches_runtime_exceptions() {
+            let divisor = value() - 42;
+            42 / divisor;
+        }
+    "#,
+    )
+    .unwrap();
+    let run = |action| {
+        Command::new(env!("CARGO_BIN_EXE_oxel"))
+            .current_dir(directory)
+            .arg(action)
+            .args([&main, &tests])
+            .output()
+            .unwrap()
+    };
+    let result = run("test");
+    assert_eq!(result.status.code(), Some(1));
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        output.starts_with("FAIL fails\nSystem.InvalidOperationException: wrong result\n"),
+        "{output}"
+    );
+    assert!(
+        output.contains("\nok continues\nFAIL catches_runtime_exceptions\n"),
+        "{output}"
+    );
+    assert!(output.contains("System.DivideByZeroException"), "{output}");
+    assert!(output.ends_with("3 tests, 2 failed\n"), "{output}");
+    assert!(!output.contains("eager message"), "{output}");
+    assert_eq!(stdout(run("run")), "42\n");
+
+    fs::write(&tests, "#[test] fn broken() { unknown(); }").unwrap();
+    assert_eq!(stdout(run("run")), "42\n");
+    let rejected = run("test");
+    assert!(!rejected.status.success());
+    let error = String::from_utf8(rejected.stderr).unwrap();
+    assert!(
+        error.contains("tests.oxel:1:") && error.contains("E0203"),
+        "{error}"
+    );
+
+    for source in [
+        "#[test] fn generic<T>() {}",
+        "#[test] fn argument(value: i32) {}",
+        "#[test] fn result() -> bool { true }",
+        "fn main() { example(); } #[test] fn example() {}",
+    ] {
+        let errors = oxel::compile_test_project(
+            &[source],
+            "suite",
+            &oxel::References::default(),
+            oxel::AssemblyKind::Executable,
+        )
+        .unwrap_err();
+        assert_eq!(errors[0].diagnostic.code, "E0346", "{source}: {errors:?}");
+    }
+}
+
+#[test]
 fn struct_patterns_destructure_and_check_nested_field_coverage() {
     let folder = tempfile::tempdir().unwrap();
     let program = folder.path().join("patterns.oxel");

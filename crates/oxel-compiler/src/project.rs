@@ -59,8 +59,28 @@ pub fn compile_project_with_kind(
     references: &References,
     kind: AssemblyKind,
 ) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
+    compile(sources, assembly_name, references, kind, false)
+}
+
+/// Compiles source and annotated tests with a synthetic entry point.
+pub fn compile_test_project(
+    sources: &[&str],
+    assembly_name: &str,
+    references: &References,
+    kind: AssemblyKind,
+) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
+    compile(sources, assembly_name, references, kind, true)
+}
+
+fn compile(
+    sources: &[&str],
+    assembly_name: &str,
+    references: &References,
+    kind: AssemblyKind,
+    tests: bool,
+) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
     let project = Project::new(sources);
-    let program = project.analyze(|module| hir::lower(module, references, kind))?;
+    let program = project.analyze(|module| hir::lower(module, references, kind, tests))?;
     cil::emit(&program, sources, assembly_name, references)
         .map_err(|error| vec![project.map.locate(error)])
 }

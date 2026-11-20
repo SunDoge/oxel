@@ -24,7 +24,7 @@ use super::{
     StackSlot, TYPE_DEF, TYPE_SPEC, WRITE_LINE_OVERLOADS,
 };
 use crate::{
-    ArgumentMode, Diagnostic, References, Span,
+    ArgumentMode, AssemblyKind, Diagnostic, References, Span,
     clr::{Assembly, BUILTIN_ASSEMBLIES, Invocation, TypeBoundKind, builtin_assembly},
     hir::{GenericBound, InstanceKind, MethodBody, Program, Signature, Struct, Type, TypeInstance},
     syntax::{NativeImport, ParameterPassing},
@@ -107,8 +107,15 @@ pub(super) fn write(
         ));
     }
     let mut text = Writer::new();
-    let namespace = program.entry.is_none().then_some(name);
-    let mut metadata = Tables::new(name, namespace, sources, references, &program.instances);
+    let namespace = (program.kind == AssemblyKind::Library).then_some(name);
+    let mut metadata = Tables::new(
+        name,
+        namespace,
+        sources,
+        references,
+        &program.instances,
+        program.tests,
+    );
     metadata.add_structs(&program.structs, namespace, method_count as u32 + 1);
     for (method_index, (function, lambda_base)) in methods.into_iter().zip(lambda_bases).enumerate()
     {
@@ -314,15 +321,19 @@ impl<'refs> Tables<'refs> {
         sources: &[&str],
         externals: &'refs References,
         instances: &'refs [TypeInstance],
+        tests: bool,
     ) -> Self {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
         let mut guids = GuidHeap::new();
-        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 47 module id");
+        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 48 module id");
         hash.update(name.as_bytes());
         hash.update(b"\0");
         if namespace.is_some() {
             hash.update(b"library\0");
+        }
+        if tests {
+            hash.update(b"tests\0");
         }
         hash.update(&(sources.len() as u64).to_le_bytes());
         for source in sources {
@@ -371,6 +382,7 @@ impl<'refs> Tables<'refs> {
             (1, "String"),
             (1, "ValueType"),
             (1, "InvalidOperationException"),
+            (1, "Exception"),
         ]
         .map(|(row, name)| TypeRefRow {
             resolution_scope: index(TableId::AssemblyRef, row),
@@ -456,6 +468,9 @@ impl<'refs> Tables<'refs> {
         tables.push_member(STRING_REF, "get_Length", signature);
         let signature = tables.method_signature(&[Type::I32], Type::Char, Invocation::Instance, 0);
         tables.push_member(STRING_REF, "get_Chars", signature);
+        let signature =
+            tables.method_signature(&[Type::String], Type::Void, Invocation::Constructor, 0);
+        tables.push_member(INVALID_OPERATION_REF, ".ctor", signature);
         tables
     }
 

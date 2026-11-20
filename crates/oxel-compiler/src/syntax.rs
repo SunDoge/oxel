@@ -44,6 +44,7 @@ enum Kind {
     RightParen,
     LeftBracket,
     RightBracket,
+    Hash,
     LeftBrace,
     RightBrace,
     Colon,
@@ -214,6 +215,7 @@ fn lex(source: &str, base: usize) -> (Vec<Token>, Vec<Diagnostic>) {
             b')' => RightParen,
             b'[' => LeftBracket,
             b']' => RightBracket,
+            b'#' => Hash,
             b'{' => {
                 if let Some(Interpolation {
                     mode: InterpolationMode::Hole(depth),
@@ -667,6 +669,7 @@ pub(crate) enum PatternKind<'src> {
 pub(crate) struct Function<'src> {
     pub internal: bool,
     pub comptime: bool,
+    pub test: bool,
     pub name: &'src str,
     pub name_span: Span,
     pub declaration_span: Span,
@@ -1151,6 +1154,9 @@ fn parse_with_cursor(
                 Err(parser
                     .expected("'fn', 'comptime', 'extern', 'struct', or 'enum' after 'internal'"))
             }
+            Hash => parser
+                .test_function()
+                .map(|function| file.functions.push(function)),
             Const => parser
                 .constant()
                 .map(|definition| file.constants.push(definition)),
@@ -1250,8 +1256,10 @@ impl<'src> Parser<'src> {
     }
 
     fn starts_declaration(&self) -> bool {
-        matches!(self.peek(), Fn | Comptime | Extern | Struct | Enum | Const)
-            || self.is_internal(self.current())
+        matches!(
+            self.peek(),
+            Fn | Comptime | Extern | Struct | Enum | Const | Hash
+        ) || self.is_internal(self.current())
     }
 
     fn semicolon(&mut self) -> Parsed<Token> {
@@ -1612,6 +1620,7 @@ impl<'src> Parser<'src> {
         Ok(Function {
             internal: header.internal,
             comptime: header.comptime,
+            test: false,
             name: header.name,
             name_span: header.name_span,
             declaration_span: Span {
@@ -1624,6 +1633,28 @@ impl<'src> Parser<'src> {
             result: header.result,
             body,
         })
+    }
+
+    fn test_function(&mut self) -> Parsed<Function<'src>> {
+        let start = self.bump().span.start;
+        self.expect(LeftBracket, "'[' after '#'")?;
+        let (attribute, span) = self.name()?;
+        if attribute != "test" {
+            return Err(Diagnostic::new(
+                "E0346",
+                span,
+                format!("unknown attribute '{attribute}'"),
+            ));
+        }
+        self.expect(RightBracket, "']' after 'test'")?;
+        if self.peek() != Fn {
+            return Err(self.expected("'fn' after '#[test]'"));
+        }
+        let mut function = self.function(None)?;
+        function.test = true;
+        function.internal = true;
+        function.declaration_span.start = start;
+        Ok(function)
     }
 
     fn import_string(&mut self, description: &str) -> Parsed<Box<str>> {

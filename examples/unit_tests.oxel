@@ -1,0 +1,13 @@
+fn add(left: i32, right: i32) -> i32 {
+    left + right
+}
+
+#[test]
+fn adds_positive_numbers() {
+    assert(add(10, 20) == 30);
+}
+
+#[test]
+fn zero_is_the_additive_identity() {
+    assert(add(30, 0) == 30, "adding zero should preserve the input");
+}

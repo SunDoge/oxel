@@ -60,6 +60,19 @@ oxel run examples/project/main.oxel examples/project/geometry.oxel
 
 Pass the files of a module as positional arguments to `check`, `compile`, `run` or `publish`. All files share top-level function and type names, and the module has one `main`. The first source filename supplies the default executable name. Each file is parsed separately, and diagnostics show positions in the originating file.
 
+## Unit tests
+
+Mark a parameterless, non-generic function that returns `void` with `#[test]`. Use `assert(condition)` or `assert(condition, "message")`. A false condition raises a CLR exception with the failure message. The optional message expression runs only on failure.
+
+```rust
+#[test]
+fn adds_positive_numbers() {
+    assert(10 + 20 == 30);
+}
+```
+
+Run `oxel test examples/unit_tests.oxel`, or run `oxel test` in a directory with `oxel.toml`. Tests share the module with production functions and can call internal helpers. The runner executes tests in source order on CoreCLR, reports exceptions per test, and exits with status 1 if any fail. A test run can use a library or a module without `main`. Normal builds omit test functions. [Runnable unit tests](examples/unit_tests.oxel)
+
 ## Project manifest
 
 ```toml

@@ -15,7 +15,7 @@ pub use clr::{References, valid_assembly_name};
 pub use hir::{Type, clr_function_signatures};
 pub use project::{
     AssemblyKind, SourceDiagnostic, check_project, check_project_with_kind, compile_project,
-    compile_project_with_kind,
+    compile_project_with_kind, compile_test_project,
 };
 pub use syntax::{CallSite, call_site, declared_function_signature, valid_identifier};
 
@@ -199,6 +199,7 @@ pub fn compile_with_references(
         syntax::Module::new([&file]),
         references,
         AssemblyKind::Executable,
+        false,
     )?;
     cil::emit(&program, &[source], assembly_name, references).map_err(|error| vec![error])
 }

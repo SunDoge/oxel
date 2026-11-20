@@ -25,6 +25,31 @@ fn successful(output: Output) -> String {
 }
 
 #[test]
+fn test_runs_a_library_manifest_with_framework_references() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    fs::write(
+        project.join("oxel.toml"),
+        "[package]\nname = 'Samples.Suite'\nkind = 'library'\nframework = true\nsources = ['tests.oxel']\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("tests.oxel"),
+        r#"
+            #[test]
+            fn parses_an_integer() {
+                assert(System.Int32.Parse("30") == 30);
+            }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        successful(cli(project, &["test"], false)),
+        "ok parses_an_integer\n1 test, 0 failed\n",
+    );
+}
+
+#[test]
 fn manifest_drives_check_compile_and_run_from_another_directory() {
     let folder = tempfile::tempdir().unwrap();
     let package = folder.path().join("my project");

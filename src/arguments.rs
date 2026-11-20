@@ -40,6 +40,8 @@ enum Command {
     Check(BuildInputs),
     /// Compile and run on CoreCLR.
     Run(RunInputs),
+    /// Compile and run Oxel unit tests on CoreCLR.
+    Test(BuildInputs),
     /// Publish a native executable with the .NET SDK.
     Publish(BuildInputs),
     /// Restore SDK dependencies and write the NuGet lock file.
@@ -88,6 +90,7 @@ pub(super) enum Action {
     Compile,
     Check,
     Run,
+    Test,
     Publish,
     Restore,
     Lsp,
@@ -144,6 +147,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
             arguments = run.arguments;
             (Action::Run, run.build)
         }
+        Command::Test(build) => (Action::Test, build),
         Command::Publish(build) => {
             native = true;
             (Action::Publish, build)

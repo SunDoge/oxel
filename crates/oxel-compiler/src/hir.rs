@@ -9,6 +9,7 @@ mod inference;
 mod iteration;
 mod lambdas;
 mod nullability;
+mod test_harness;
 mod unions;
 
 use std::{
@@ -209,6 +210,8 @@ pub(crate) struct Program<'src> {
     pub structs: Vec<Struct<'src>>,
     pub instances: Vec<TypeInstance>,
     pub entry: Option<usize>,
+    pub kind: AssemblyKind,
+    pub tests: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1210,6 +1213,7 @@ pub(crate) enum Value {
 pub(crate) enum Target {
     Function(usize, Box<[Type]>),
     WriteLine(Option<Type>),
+    AssertionException,
     DefaultConstructor(Type),
     External {
         method: usize,
@@ -1250,7 +1254,8 @@ pub(crate) struct UsingRegion {
 }
 
 pub(crate) struct Catch {
-    pub ty: Type,
+    /// A synthesized handler without a source type catches System.Exception.
+    pub ty: Option<Type>,
     pub local: Option<u16>,
     pub body: Block,
 }
@@ -1415,13 +1420,30 @@ pub(crate) fn check(
 }
 
 pub(crate) fn lower<'src>(
-    file: syntax::Module<'_, 'src>,
+    mut file: syntax::Module<'_, 'src>,
     references: &References,
     kind: AssemblyKind,
+    tests: bool,
 ) -> Result<Program<'src>, Vec<Diagnostic>> {
-    let scope = prepare(file, references, EntryPoint::for_build(kind), None, None)?;
+    if !tests {
+        file.functions.retain(|function| !function.test);
+    }
+    let mode = if tests {
+        EntryPoint::None
+    } else {
+        EntryPoint::for_build(kind)
+    };
+    let scope = prepare(file, references, mode, None, None)?;
     let mut functions = Vec::with_capacity(scope.runtime_functions().len());
     scope.check_runtime(std::convert::identity, |function| functions.push(function))?;
+    let entry = if tests {
+        let runner = test_harness::runner(scope.runtime_functions());
+        let entry = functions.len();
+        functions.push(runner);
+        Some(entry)
+    } else {
+        scope.entry
+    };
     let mut structs = scope.types.definitions;
     if !scope.types.field_info_used.load(Ordering::Relaxed) {
         structs.pop();
@@ -1445,7 +1467,9 @@ pub(crate) fn lower<'src>(
         functions,
         structs,
         instances,
-        entry: scope.entry,
+        entry,
+        kind,
+        tests,
     })
 }
 
@@ -1582,7 +1606,21 @@ fn prepare<'ast, 'src, 'refs>(
             ));
         }
         match signature(function, &types) {
-            Ok(signature) => signatures.push(signature),
+            Ok(signature) => {
+                if function.test
+                    && (function.name == "main"
+                        || signature.type_arity != 0
+                        || !signature.parameters.is_empty()
+                        || signature.result != Type::Void)
+                {
+                    errors.push(Diagnostic::new(
+                        "E0346",
+                        function.name_span,
+                        "a test must be a non-generic, parameterless void function named other than 'main'",
+                    ));
+                }
+                signatures.push(signature);
+            }
             Err(error) => errors.push(error),
         }
     }
@@ -1788,6 +1826,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
         let mut checker = Checker {
             names: &self.names,
             comptime: function.comptime,
+            in_test: function.test,
             signatures: &self.signatures,
             constants: &self.constants,
             functions: &self.functions,
@@ -2359,6 +2398,7 @@ enum MemberAccess<'a, 'src> {
 }
 
 struct Checker<'a, 'src> {
+    in_test: bool,
     comptime: bool,
     names: &'a HashMap<&'src str, usize>,
     signatures: &'a [Signature],
@@ -4310,7 +4350,8 @@ impl<'a, 'src> Checker<'a, 'src> {
             }
             if handlers
                 .iter()
-                .any(|handler| ty == handler.ty || self.can_upcast(ty, handler.ty))
+                .filter_map(|handler| handler.ty)
+                .any(|previous| ty == previous || self.can_upcast(ty, previous))
             {
                 return Err(Diagnostic::new(
                     "E0344",
@@ -4352,7 +4393,11 @@ impl<'a, 'src> Checker<'a, 'src> {
                     .and_then(|tail| self.else_hint(result, tail, expected))
                     .or(expected);
                 let body = self.block(&arm.body, hint)?;
-                Ok(Catch { ty, local, body })
+                Ok(Catch {
+                    ty: Some(ty),
+                    local,
+                    body,
+                })
             })();
             self.scopes.pop();
             let handler = checked?;
@@ -4584,6 +4629,9 @@ impl<'a, 'src> Checker<'a, 'src> {
             lookups.push(Lookup::Function(name));
         }
         let (target, args, result) = match path.segments.as_slice() {
+            [("assert", _)] if !self.names.contains_key("assert") => {
+                return self.assertion(path.span, type_arguments, args);
+            }
             [("System", _), ("Console", _), ("WriteLine", _)] => {
                 if !type_arguments.is_empty() {
                     return Err(Diagnostic::new(
@@ -4647,6 +4695,13 @@ impl<'a, 'src> Checker<'a, 'src> {
                 let index = self.names[name];
                 let signature = &self.signatures[index];
                 let declaration = &self.functions[index];
+                if declaration.test && !self.in_test {
+                    return Err(Diagnostic::new(
+                        "E0346",
+                        *span,
+                        "an ordinary function cannot call a test function",
+                    ));
+                }
                 self.track_signature(declaration);
                 if self.comptime != declaration.comptime {
                     return Err(Diagnostic::new(

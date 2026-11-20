@@ -145,10 +145,23 @@ fn cli(run: &mut Run) -> ExitCode {
             } else {
                 None
             };
+        let runtime_kind = if matches!(action, Action::Test) {
+            AssemblyKind::Executable
+        } else {
+            kind
+        };
         let resolution = resolution.map_or_else(
             || {
-                sdk::SdkProject::restore(path, name, &nuget, native, lock_mode, framework, kind)
-                    .map(sdk::Resolution::Project)
+                sdk::SdkProject::restore(
+                    path,
+                    name,
+                    &nuget,
+                    native,
+                    lock_mode,
+                    framework,
+                    runtime_kind,
+                )
+                .map(sdk::Resolution::Project)
             },
             Ok,
         );
@@ -264,7 +277,12 @@ fn execute(
         };
         (path.as_path(), Path::new(""), name)
     };
-    let bytes = match oxel::compile_project_with_kind(&sources, name, &references, kind) {
+    let compile = if matches!(action, Action::Test) {
+        oxel::compile_test_project
+    } else {
+        oxel::compile_project_with_kind
+    };
+    let bytes = match compile(&sources, name, &references, kind) {
         Ok(bytes) => bytes,
         Err(errors) => return format.report(paths, &sources, errors),
     };
@@ -283,7 +301,7 @@ fn execute(
             return format.error(origin, "E0004", error.to_string());
         }
         match action {
-            Action::Run => {
+            Action::Run | Action::Test => {
                 return run_dll(
                     origin,
                     &output.join(format!("{name}.dll")),
@@ -322,7 +340,7 @@ fn execute(
         }
     }
 
-    if matches!(action, Action::Run) {
+    if matches!(action, Action::Run | Action::Test) {
         return run(
             origin,
             name,
