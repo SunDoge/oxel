@@ -2,3 +2,4 @@
 cocogitto = "7"
 dotnet = "10"
 hk = { version = "2.12", workflow = "release.yml" }
+release-plz = "0.4.0"

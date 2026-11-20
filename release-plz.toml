@@ -1,0 +1,17 @@
+[workspace]
+changelog_update = false
+
+[[package]]
+name = "oxel-compiler"
+version_group = "oxel"
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "oxel-cli"
+version_group = "oxel"
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = ["oxel-compiler"]
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"

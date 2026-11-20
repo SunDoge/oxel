@@ -717,6 +717,10 @@ CIL and metadata are emitted in declaration order. Constructed type IDs are inte
 
 Commits follow Conventional Commits. Run `mise install` for the project tools and make `cog` available on `PATH`. In a fresh clone, run `cog install-hook commit-msg` to validate messages on commit. Use `git commit -m "feat: add a compiler feature"` or `cog commit feat "add a compiler feature"`. Run `cog check` to validate the branch history. [mise](https://mise.jdx.dev/) · [Cocogitto Git hooks](https://docs.cocogitto.io/guide/git_hooks.html)
 
+### Releases
+
+Release-plz manages the two Cargo packages as one version group. The CLI's release notes include compiler changes in the root `CHANGELOG.md`, and a release has one Git tag such as `v0.1.0`. Run `release-plz update` on a clean branch to review version and changelog edits locally. Once the repository and registry are configured, use `release-plz release --dry-run` to verify packaging before publishing. [Release-plz CLI](https://release-plz.dev/docs/usage)
+
 ```sh
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
