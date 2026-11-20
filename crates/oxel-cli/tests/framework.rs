@@ -17,8 +17,8 @@ fn success(output: Output) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-const EXAMPLE: &str = include_str!("../examples/file_lines.oxel");
-const ENUM_EXAMPLE: &str = include_str!("../examples/enum_interop.oxel");
+const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
+const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
 fn framework_null_guard_refines_its_argument_after_normal_return() {
@@ -68,7 +68,7 @@ fn traverses_framework_lists_and_lazy_linq_sequences() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/collections.oxel"),
+        include_str!("../../../examples/collections.oxel"),
     )
     .unwrap();
     assert_eq!(
@@ -83,7 +83,7 @@ fn flags_combine_and_pass_to_framework_apis() {
     let path = folder.path();
     fs::write(
         path.join("main.oxel"),
-        include_str!("../examples/bitwise.oxel"),
+        include_str!("../../../examples/bitwise.oxel"),
     )
     .unwrap();
     let result = success(oxel(path, &["run", "--framework", "main.oxel"]));
@@ -99,7 +99,7 @@ fn framework_events_subscribe_and_unsubscribe_clr_delegates() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/events.oxel"),
+        include_str!("../../../examples/events.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "--framework", "main.oxel"]));
@@ -112,7 +112,7 @@ fn trailing_lambdas_bind_constructed_and_inferred_framework_delegates() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/generic_callbacks.oxel"),
+        include_str!("../../../examples/generic_callbacks.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "--framework", "main.oxel"]));
@@ -125,7 +125,7 @@ fn nested_lambdas_keep_each_synthetic_method_and_capture_in_scope() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/nested_lambdas.oxel"),
+        include_str!("../../../examples/nested_lambdas.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "--framework", "main.oxel"]));
@@ -141,7 +141,7 @@ fn mutable_lambdas_share_storage_and_keep_loop_instances_distinct() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/mutable_captures.oxel"),
+        include_str!("../../../examples/mutable_captures.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "--framework", "main.oxel"]));
@@ -175,7 +175,7 @@ fn http_server_example_serves_real_loopback_requests() {
     let project = folder.path();
     fs::write(
         project.join("http_server.oxel"),
-        include_str!("../examples/http_server.oxel"),
+        include_str!("../../../examples/http_server.oxel"),
     )
     .unwrap();
     let artifact = success(oxel(
@@ -284,7 +284,7 @@ fn clr_throw_terminates_an_expression_with_the_original_exception() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/exceptions.oxel"),
+        include_str!("../../../examples/exceptions.oxel"),
     )
     .unwrap();
     assert_eq!(
@@ -381,7 +381,7 @@ fn clr_framework_value_structs_execute_through_constructors_and_interface_calls(
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/date_ranges.oxel"),
+        include_str!("../../../examples/date_ranges.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "main.oxel", "--framework"]));
@@ -392,7 +392,7 @@ fn clr_framework_value_structs_execute_through_constructors_and_interface_calls(
 fn clr_framework_generic_structs_keep_constructed_value_signatures() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();
-    let source = include_str!("../examples/key_value_pairs.oxel");
+    let source = include_str!("../../../examples/key_value_pairs.oxel");
     fs::write(project.join("main.oxel"), source).unwrap();
     let result = success(oxel(project, &["run", "main.oxel", "--framework"]));
     assert_eq!(result.lines().collect::<Vec<_>>(), ["score", "30"]);
@@ -404,7 +404,7 @@ fn maps_clr_nullable_values_to_the_standard_option() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/clr_option.oxel"),
+        include_str!("../../../examples/clr_option.oxel"),
     )
     .unwrap();
     assert_eq!(
@@ -440,7 +440,7 @@ fn framework_annotated_generic_returns_use_the_concrete_type() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/annotated_clr_generics.oxel"),
+        include_str!("../../../examples/annotated_clr_generics.oxel"),
     )
     .unwrap();
     assert_eq!(
@@ -727,7 +727,7 @@ fn nullable_values_use_clr_storage_and_lazy_fallbacks() {
     let project = folder.path();
     fs::write(
         project.join("main.oxel"),
-        include_str!("../examples/nullable_values.oxel"),
+        include_str!("../../../examples/nullable_values.oxel"),
     )
     .unwrap();
     let result = success(oxel(project, &["run", "main.oxel", "--framework"]));
@@ -873,7 +873,7 @@ fn clr_typed_catches_restore_pending_operands_and_match_in_order() {
     let project = folder.path();
     fs::write(
         project.join("sample.oxel"),
-        include_str!("../examples/catch.oxel"),
+        include_str!("../../../examples/catch.oxel"),
     )
     .unwrap();
     let sample = success(oxel(project, &["run", "--framework", "sample.oxel"]));
@@ -990,7 +990,7 @@ fn disposable_using_cleans_up_on_every_clr_control_transfer() {
     let project = folder.path();
     fs::write(
         project.join("sample.oxel"),
-        include_str!("../examples/using.oxel"),
+        include_str!("../../../examples/using.oxel"),
     )
     .unwrap();
     assert_eq!(

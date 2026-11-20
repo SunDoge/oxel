@@ -331,14 +331,17 @@ fn packages_custom_c_library_for_coreclr_and_native_aot() {
     let project = root.join("app");
     fs::create_dir_all(project.join("target")).unwrap();
     for (name, source) in [
-        ("math.c", include_str!("../examples/native_interop/math.c")),
+        (
+            "math.c",
+            include_str!("../../../examples/native_interop/math.c"),
+        ),
         (
             "main.oxel",
-            include_str!("../examples/native_interop/main.oxel"),
+            include_str!("../../../examples/native_interop/main.oxel"),
         ),
         (
             "oxel.toml",
-            include_str!("../examples/native_interop/oxel.toml"),
+            include_str!("../../../examples/native_interop/oxel.toml"),
         ),
     ] {
         fs::write(project.join(name), source).unwrap();

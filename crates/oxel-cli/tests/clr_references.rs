@@ -29,7 +29,7 @@ fn resolves_and_executes_static_overloads_from_a_csharp_assembly() {
          fn unwrap_nested(value: Maybe<i32>) -> i32 {{
              1 + match Envelope.Wrap(value) {{ Wrap(Some(x)) => x, Wrap(Maybe.None) => 0 }}
          }}",
-        include_str!("../examples/structs.oxel")
+        include_str!("../../../examples/structs.oxel")
     );
     let records = oxel::compile(&records_source, "OxelRecords").unwrap();
     let records_path = cwd.join("OxelRecords.dll");
@@ -330,13 +330,13 @@ fn build_counter_bridge(cwd: &std::path::Path) -> u32 {
     let major = sdk.split('.').next().unwrap().parse::<u32>().unwrap();
     fs::write(
         cwd.join("Bridge.csproj"),
-        include_str!("../examples/interop/Bridge.csproj")
+        include_str!("../../../examples/interop/Bridge.csproj")
             .replace("net8.0", &format!("net{major}.0")),
     )
     .unwrap();
     fs::write(
         cwd.join("Counter.cs"),
-        include_str!("../examples/interop/Counter.cs"),
+        include_str!("../../../examples/interop/Counter.cs"),
     )
     .unwrap();
     successful(
@@ -476,7 +476,7 @@ fn constructs_clr_objects_and_dispatches_instance_calls() {
     );
     let foreign_bytes = fs::read(cwd.join("lib/Foreign.dll")).unwrap();
     references.add(&foreign_bytes).unwrap();
-    let source = include_str!("../examples/interop/main.oxel")
+    let source = include_str!("../../../examples/interop/main.oxel")
         .replace("counter.Copy().Read()", "Program.transform(counter).Read()")
         .replace(
             "new Samples.Interop.Counter(30).Read()",
@@ -599,7 +599,7 @@ fn enforces_generic_bounds_and_dispatches_for_clr_structs_and_classes() {
         assert_eq!(errors[0].code, expected, "{snippet}: {errors:?}");
     }
 
-    let mut source = include_str!("../examples/interop/constraints.oxel").replace(
+    let mut source = include_str!("../../../examples/interop/constraints.oxel").replace(
         "System.Console.WriteLine(second.Value);",
         r#"System.Console.WriteLine(second.Value);
     System.Console.WriteLine(Samples.Interop.CounterLabel.Rank(first, 1));
@@ -1601,7 +1601,7 @@ fn calls_static_members_on_constructed_clr_classes() {
     )).unwrap();
     fs::write(
         cwd.join("Cell.cs"),
-        include_str!("../examples/interop/Cell.cs"),
+        include_str!("../../../examples/interop/Cell.cs"),
     )
     .unwrap();
     successful(
@@ -1614,7 +1614,7 @@ fn calls_static_members_on_constructed_clr_classes() {
 
     let source = format!(
         "{}\n{}",
-        include_str!("../examples/interop/generic_classes.oxel").replacen(
+        include_str!("../../../examples/interop/generic_classes.oxel").replacen(
             "fn main()",
             "fn example()",
             1,

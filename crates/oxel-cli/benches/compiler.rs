@@ -10,7 +10,7 @@ use std::{
 };
 
 fn main() {
-    let hello = include_str!("../examples/hello.oxel");
+    let hello = include_str!("../../../examples/hello.oxel");
     let mut generated = String::new();
     for index in 0..500 {
         writeln!(
@@ -44,7 +44,7 @@ fn main() {
         return;
     };
     let folder = tempfile::tempdir().unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/hello.oxel");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello.oxel");
     let cli = |action: &str| {
         let mut command = Command::new(binary);
         command.current_dir(folder.path()).arg(action);
@@ -69,7 +69,7 @@ fn main() {
         );
     });
     if std::env::var_os("OXEL_BENCH_FRAMEWORK").is_some() {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/file_lines.oxel");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/file_lines.oxel");
         measure("CLI framework / check", || {
             completed(
                 Command::new(binary)

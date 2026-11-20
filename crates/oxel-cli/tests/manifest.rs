@@ -245,8 +245,8 @@ fn manifest_errors_keep_the_relevant_file_and_span() {
 fn managed_library_projects_are_reusable_from_csharp_and_oxel() {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    let manifest = include_str!("../examples/math_library/oxel.toml");
-    let source = include_str!("../examples/math_library/math.oxel");
+    let manifest = include_str!("../../../examples/math_library/oxel.toml");
+    let source = include_str!("../../../examples/math_library/math.oxel");
     fs::write(root.join("oxel.toml"), manifest).unwrap();
     fs::write(root.join("math.oxel"), source).unwrap();
 

@@ -2,13 +2,13 @@ use std::{fs, path::Path, process::Command};
 
 use oxel::{References, Span, check_project, compile_project, inspect_project};
 
-const MAIN: &str = include_str!("../examples/project/main.oxel");
-const GEOMETRY: &str = include_str!("../examples/project/geometry.oxel");
+const MAIN: &str = include_str!("../../../examples/project/main.oxel");
+const GEOMETRY: &str = include_str!("../../../examples/project/geometry.oxel");
 
 #[test]
 fn compiles_and_runs_cross_file_calls_and_structs() {
     let folder = tempfile::tempdir().unwrap();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/project");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/project");
     let main = root.join("main.oxel");
     let types = root.join("geometry.oxel");
     let cli = |action| {

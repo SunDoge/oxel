@@ -7,14 +7,14 @@ use std::{
 
 use oxel::Type;
 
-const HELLO: &str = include_str!("../examples/hello.oxel");
+const HELLO: &str = include_str!("../../../examples/hello.oxel");
 
 #[test]
 fn unit_tests_run_in_order_and_fail_independently_of_main() {
     let folder = tempfile::tempdir().unwrap();
     let directory = folder.path();
     let sample = directory.join("sample.oxel");
-    fs::write(&sample, include_str!("../examples/unit_tests.oxel")).unwrap();
+    fs::write(&sample, include_str!("../../../examples/unit_tests.oxel")).unwrap();
     assert_eq!(
         stdout(cli(directory, "test", &sample)),
         "ok adds_positive_numbers\nok zero_is_the_additive_identity\n2 tests, 0 failed\n",
@@ -185,7 +185,11 @@ fn struct_patterns_destructure_and_check_nested_field_coverage() {
 fn struct_update_preserves_value_semantics_and_source_order() {
     let folder = tempfile::tempdir().unwrap();
     let program = folder.path().join("update.oxel");
-    fs::write(&program, include_str!("../examples/struct_update.oxel")).unwrap();
+    fs::write(
+        &program,
+        include_str!("../../../examples/struct_update.oxel"),
+    )
+    .unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &program)),
         "Oxel\n800\n640\n"
@@ -296,7 +300,11 @@ fn generic_construction_requires_a_valid_default_for_oxel_value_types() {
 fn clr_zero_initialized_options_are_none_at_runtime_and_comptime() {
     let folder = tempfile::tempdir().unwrap();
     let program = folder.path().join("options.oxel");
-    fs::write(&program, include_str!("../examples/option_arrays.oxel")).unwrap();
+    fs::write(
+        &program,
+        include_str!("../../../examples/option_arrays.oxel"),
+    )
+    .unwrap();
     assert_eq!(stdout(cli(folder.path(), "run", &program)), "empty\noxel\n");
 
     fs::write(
@@ -375,7 +383,7 @@ fn stdout(output: Output) -> String {
 #[test]
 fn hello_smoke_test() {
     let folder = tempfile::tempdir().unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/hello.oxel");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello.oxel");
     stdout(cli(folder.path(), "check", &source));
     assert!(!folder.path().join("target").exists());
     assert_eq!(stdout(cli(folder.path(), "run", &source)).trim(), "30");
@@ -397,7 +405,7 @@ fn hello_smoke_test() {
 #[test]
 fn executable_entry_points_receive_arguments_and_return_exit_codes() {
     let folder = tempfile::tempdir().unwrap();
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/arguments.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/arguments.oxel");
     stdout(cli(folder.path(), "check", &example));
     let args = ["two words", "--reference", "", "咖啡", "--"];
     let launched = Command::new(env!("CARGO_BIN_EXE_oxel"))
@@ -466,7 +474,7 @@ fn executable_entry_points_receive_arguments_and_return_exit_codes() {
 fn arithmetic_locals_calls_and_comparisons_execute() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("control flow.oxel");
-    fs::write(&path, include_str!("../examples/control_flow.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/control_flow.oxel")).unwrap();
     let output = stdout(cli(folder.path(), "run", &path));
     assert_eq!(
         output.lines().collect::<Vec<_>>(),
@@ -643,7 +651,7 @@ fn reports_errors_in_multiple_functions_and_limits_nesting() {
 #[test]
 fn strings_execute_with_ordinal_equality_and_unicode() {
     let folder = tempfile::tempdir().unwrap();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/strings.oxel");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/strings.oxel");
     let result = stdout(cli(folder.path(), "run", &sample));
     assert_eq!(
         result.lines().collect::<Vec<_>>(),
@@ -710,7 +718,7 @@ fn rejects_bad_string_escapes_and_types() {
 #[test]
 fn struct_literals_preserve_source_order_and_value_semantics() {
     let folder = tempfile::tempdir().unwrap();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/structs.oxel");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/structs.oxel");
     let result = stdout(cli(folder.path(), "run", &sample));
     assert_eq!(result.lines().collect::<Vec<_>>(), ["Hello, Alice", "30"]);
 
@@ -788,7 +796,7 @@ fn rejects_invalid_struct_definitions_and_values() {
 #[test]
 fn nested_loop_transfers_preserve_enclosing_operands() {
     let folder = tempfile::tempdir().unwrap();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/loops.oxel");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/loops.oxel");
     assert_eq!(stdout(cli(folder.path(), "run", &sample)).trim(), "30");
 
     let program = folder.path().join("loop-flows.oxel");
@@ -905,7 +913,7 @@ fn rejects_invalid_loop_conditions_and_control_transfers() {
 fn generic_functions_execute_and_emit_clr_method_metadata() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("generics.oxel");
-    let source = include_str!("../examples/generics.oxel");
+    let source = include_str!("../../../examples/generics.oxel");
     fs::write(&path, source).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path)),
@@ -971,7 +979,7 @@ fn rejects_invalid_generic_declarations_and_calls() {
 fn generic_structs_have_clr_value_semantics() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("generic_structs.oxel");
-    let source = include_str!("../examples/generic_structs.oxel");
+    let source = include_str!("../../../examples/generic_structs.oxel");
     fs::write(&path, source).unwrap();
     assert_eq!(stdout(cli(folder.path(), "run", &path)), "30\noxel\n");
     assert_eq!(
@@ -1136,7 +1144,7 @@ fn reports_conflicting_and_missing_inferred_type_arguments() {
 fn floating_point_operations_preserve_width_and_ieee_comparisons() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("floats.oxel");
-    fs::write(&path, include_str!("../examples/floats.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/floats.oxel")).unwrap();
     let output = stdout(cli(folder.path(), "run", &path));
     assert_eq!(output.lines().collect::<Vec<_>>(), ["25", "25", "True"]);
 
@@ -1191,7 +1199,7 @@ fn diagnoses_floating_point_literal_and_type_errors() {
 fn small_integer_operations_use_the_declared_width() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("integers.oxel");
-    fs::write(&path, include_str!("../examples/integers.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/integers.oxel")).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -1240,7 +1248,7 @@ fn small_integer_operations_use_the_declared_width() {
 fn boxes_casts_and_tests_clr_objects() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("objects.oxel");
-    fs::write(&path, include_str!("../examples/objects.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/objects.oxel")).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -1304,7 +1312,7 @@ fn preserves_clr_cast_checks_after_an_object_upcast() {
 fn nullable_references_refine_and_coalesce_lazily() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("nullable.oxel");
-    fs::write(&path, include_str!("../examples/nullable.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/nullable.oxel")).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -1486,7 +1494,7 @@ fn rejects_nullable_references_in_nonnullable_use_sites() {
 fn checks_delayed_initialization_through_control_flow() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("assignment.oxel");
-    fs::write(&path, include_str!("../examples/assignment.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/assignment.oxel")).unwrap();
     assert_eq!(stdout(cli(folder.path(), "run", &path)).trim(), "30");
 
     let source = r#"
@@ -1602,7 +1610,7 @@ fn rejects_reads_and_reassignments_without_pathwise_proof() {
 #[test]
 fn discriminated_unions_execute_and_preserve_match_control_flow() {
     let folder = tempfile::tempdir().unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/unions.oxel");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/unions.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &source))
             .lines()
@@ -1840,7 +1848,7 @@ fn deeply_nested_patterns_report_a_syntax_diagnostic() {
 #[test]
 fn try_blocks_capture_the_nearest_failure_and_preserve_surrounding_operands() {
     let folder = tempfile::tempdir().unwrap();
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/try_blocks.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/try_blocks.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example))
             .lines()
@@ -1936,7 +1944,7 @@ fn try_blocks_validate_success_types_transfers_and_definite_assignment() {
 #[test]
 fn option_propagation_wraps_success_and_preserves_nested_result_contexts() {
     let folder = tempfile::tempdir().unwrap();
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/option_try.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/option_try.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example))
             .lines()
@@ -2050,7 +2058,11 @@ fn dense_literal_matches_keep_guards_and_defaults() {
 fn literal_patterns_match_widths_and_check_scalar_coverage() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("literal_patterns.oxel");
-    fs::write(&path, include_str!("../examples/literal_patterns.oxel")).unwrap();
+    fs::write(
+        &path,
+        include_str!("../../../examples/literal_patterns.oxel"),
+    )
+    .unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -2158,7 +2170,11 @@ fn literal_patterns_match_widths_and_check_scalar_coverage() {
 fn pattern_alternatives_share_bindings_and_match_in_order() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("alternatives.oxel");
-    fs::write(&path, include_str!("../examples/pattern_alternatives.oxel")).unwrap();
+    fs::write(
+        &path,
+        include_str!("../../../examples/pattern_alternatives.oxel"),
+    )
+    .unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -2270,7 +2286,7 @@ fn pattern_alternatives_share_bindings_and_match_in_order() {
 fn match_guards_resume_lazily_and_preserve_assignment_effects() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("match_guards.oxel");
-    fs::write(&path, include_str!("../examples/match_guards.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/match_guards.oxel")).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -2364,7 +2380,11 @@ fn match_guards_resume_lazily_and_preserve_assignment_effects() {
 fn pattern_conditions_bind_on_success_and_scope_each_iteration() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("pattern_conditions.oxel");
-    fs::write(&path, include_str!("../examples/pattern_conditions.oxel")).unwrap();
+    fs::write(
+        &path,
+        include_str!("../../../examples/pattern_conditions.oxel"),
+    )
+    .unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -2435,7 +2455,7 @@ fn pattern_conditions_bind_on_success_and_scope_each_iteration() {
 fn let_else_destructures_once_and_checks_failure_scope_and_control_flow() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("let_else.oxel");
-    fs::write(&path, include_str!("../examples/let_else.oxel")).unwrap();
+    fs::write(&path, include_str!("../../../examples/let_else.oxel")).unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &path))
             .lines()
@@ -2542,7 +2562,7 @@ fn option_propagation_checks_carriers_and_failure_paths() {
 #[test]
 fn result_propagation_preserves_evaluation_order_and_clr_types() {
     let folder = tempfile::tempdir().unwrap();
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/errors.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/errors.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example))
             .lines()
@@ -2743,7 +2763,7 @@ fn numeric_casts_match_comptime_and_coreclr_at_boundaries() {
         ],
     );
 
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/numeric_casts.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/numeric_casts.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example))
             .lines()
@@ -2842,7 +2862,7 @@ fn interpolation_handles_nested_expressions_braces_and_nulls() {
             "",
         ],
     );
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/interpolation.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/interpolation.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example)).trim(),
         "Hello, Alice. You are 20 years old.",
@@ -2966,7 +2986,7 @@ fn integer_ranges_execute_with_single_evaluation_and_bounded_increments() {
         ],
     );
 
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/ranges.oxel");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/ranges.oxel");
     assert_eq!(
         stdout(cli(folder.path(), "run", &example))
             .lines()
@@ -3264,7 +3284,7 @@ fn compound_assignments_use_binary_types_and_require_initialized_mutable_binding
 #[test]
 fn arrays_allocate_and_update_clr_vectors() {
     let folder = tempfile::tempdir().unwrap();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/arrays.oxel");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/arrays.oxel");
     assert_eq!(stdout(cli(folder.path(), "run", &sample)).trim(), "30");
 
     let program = folder.path().join("vectors.oxel");
@@ -3362,7 +3382,7 @@ fn arrays_allocate_and_update_clr_vectors() {
 #[test]
 fn clr_characters_and_string_indices_use_utf16_code_units() {
     let folder = tempfile::tempdir().unwrap();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/characters.oxel");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/characters.oxel");
     assert_eq!(stdout(cli(folder.path(), "run", &sample)), "A\n3\n55357\n");
     let program = folder.path().join("character.oxel");
     fs::write(
@@ -3531,7 +3551,11 @@ fn sequence_loops_visit_vector_elements_and_utf16_units() {
 fn unsigned_integer_widths_agree_at_runtime_and_comptime() {
     let folder = tempfile::tempdir().unwrap();
     let file = folder.path().join("unsigned.oxel");
-    fs::write(&file, include_str!("../examples/unsigned_integers.oxel")).unwrap();
+    fs::write(
+        &file,
+        include_str!("../../../examples/unsigned_integers.oxel"),
+    )
+    .unwrap();
     assert_eq!(
         stdout(cli(folder.path(), "run", &file))
             .lines()

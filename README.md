@@ -14,7 +14,7 @@ dotnet target/oxel/hello.dll
 cargo run -- run examples/hello.oxel
 ```
 
-Both Hello World commands print `30`. [The integer example](examples/integers.oxel) shows small integer widths and wrapping. [The floating-point example](examples/floats.oxel) uses both floating-point widths and a constant. [The control-flow example](examples/control_flow.oxel) demonstrates shadowing, reassignment, branches and an `i64` call. [The string example](examples/strings.oxel) demonstrates Unicode literals, concatenation and value equality. [The struct example](examples/structs.oxel) demonstrates nested CLR value types. [The loop example](examples/loops.oxel) uses `while`, `break` and `continue`. To use `oxel` directly, run `cargo install --path . --locked`.
+Both Hello World commands print `30`. [The integer example](examples/integers.oxel) shows small integer widths and wrapping. [The floating-point example](examples/floats.oxel) uses both floating-point widths and a constant. [The control-flow example](examples/control_flow.oxel) demonstrates shadowing, reassignment, branches and an `i64` call. [The string example](examples/strings.oxel) demonstrates Unicode literals, concatenation and value equality. [The struct example](examples/structs.oxel) demonstrates nested CLR value types. [The loop example](examples/loops.oxel) uses `while`, `break` and `continue`. To use `oxel` directly, run `cargo install --path crates/oxel-cli --locked`.
 
 - `oxel check` checks syntax, names, types and the entry point.
 - `oxel compile` writes a DLL and its `.runtimeconfig.json` to `target/oxel/` under the current directory, using the input's file stem. It prints the DLL path. Inputs with the same stem compiled from the same working directory share the output path.
@@ -669,7 +669,7 @@ The server applies versioned UTF-16 text edits and retains the latest analysis f
 
 ## Workspace layout
 
-The [`oxel-compiler`](crates/oxel-compiler/Cargo.toml) crate owns parsing, type checking, incremental analysis, CLR metadata and CIL emission. The root [`oxel`](Cargo.toml) package owns the CLI, LSP transport and .NET SDK integration. The root library re-exports the compiler API as `oxel::compile`, `oxel::check` and the related project APIs. To work on the compiler library independently, run `cargo test -p oxel-compiler --locked`.
+The [`oxel-compiler`](crates/oxel-compiler/Cargo.toml) crate owns parsing, type checking, incremental analysis, CLR metadata and CIL emission. The [`oxel-cli`](crates/oxel-cli/Cargo.toml) crate owns the `oxel` command, LSP transport and .NET SDK integration. The CLI library re-exports the compiler API as `oxel::compile`, `oxel::check` and the related project APIs. To work on the compiler library independently, run `cargo test -p oxel-compiler --locked`.
 
 | Component | Responsibility |
 |---|---|
@@ -683,13 +683,13 @@ The [`oxel-compiler`](crates/oxel-compiler/Cargo.toml) crate owns parsing, type 
 | [Compile-time evaluation](crates/oxel-compiler/src/hir/constants.rs) | Constant dependencies and typed HIR interpretation |
 | [CIL](crates/oxel-compiler/src/cil/mod.rs) | Instruction emission, evaluation stack sizing and branch fixups |
 | [Assembly](crates/oxel-compiler/src/cil/assembly.rs) | CLR metadata, stable module identity, method bodies and the managed PE entry point |
-| [Compiler API](src/lib.rs) | `oxel::check`, `oxel::compile`, editor snapshots and shared diagnostics |
-| [Language server](src/lsp/mod.rs) | stdio protocol, document snapshots and editor requests |
-| [CLI](src/main.rs) | CLI dispatch, file I/O, artifact placement and CoreCLR launch |
-| [Arguments](src/arguments.rs) | Typed usage-rs commands, help and diagnostic formatting |
-| [Manifest](src/manifest.rs) | Spanned TOML parsing and project-relative input paths |
-| [SDK](src/sdk.rs) | Framework and NuGet references, runtime packaging and typed SNAFU errors |
-| [Native AOT](src/aot.rs) | Native publishing and executable placement |
+| [Compiler API](crates/oxel-cli/src/lib.rs) | `oxel::check`, `oxel::compile`, editor snapshots and shared diagnostics |
+| [Language server](crates/oxel-cli/src/lsp/mod.rs) | stdio protocol, document snapshots and editor requests |
+| [CLI](crates/oxel-cli/src/main.rs) | CLI dispatch, file I/O, artifact placement and CoreCLR launch |
+| [Arguments](crates/oxel-cli/src/arguments.rs) | Typed usage-rs commands, help and diagnostic formatting |
+| [Manifest](crates/oxel-cli/src/manifest.rs) | Spanned TOML parsing and project-relative input paths |
+| [SDK](crates/oxel-cli/src/sdk.rs) | Framework and NuGet references, runtime packaging and typed SNAFU errors |
+| [Native AOT](crates/oxel-cli/src/aot.rs) | Native publishing and executable placement |
 
 When extending syntax, lower the new construct to typed HIR before implementing its CIL behavior. CLR metadata tokens are assigned in the backend. The built-in console call uses known framework signatures. External calls and property accessors resolve from the supplied assemblies without loading managed code. The backend encodes imported reference types as assembly-scoped CLR type references and emits `newobj` and `callvirt` for construction and instance calls. [ECMA-335](https://ecma-international.org/publications-and-standards/standards/ecma-335/) Both the CLI and future editor workflows can use the same analysis entry points.
 
@@ -727,6 +727,6 @@ The benchmark measures in-process check and compile for the example, a generated
 
 The opt-in framework benchmark times `check --framework` on the file line-counting example, including SDK discovery and CLR metadata loading. The opt-in Go comparison uses equivalent sources with 1,024 functions that perform integer arithmetic and branching. It launches each compiler directly with one worker and includes writing its output. Oxel emits a CLR assembly and runtime configuration. Go emits an object file using the compiler behind `go tool compile`. The comparison covers this single-file workload with warm filesystem caches.
 
-The C# comparison uses the same 1,024-function workload and launches the installed SDK's Roslyn compiler directly with optimizations and deterministic emission enabled. Both compilations use one worker and include compiler process startup and writing the assembly, with warm filesystem caches. The Roslyn measurement includes its managed host startup. SDK reference resolution happens during setup. The execution comparison uses a shared runtime configuration with tiered compilation disabled for both languages. It times launching equivalent console programs, including their initial JIT and output. For steady-state execution, the [Oxel kernel](benches/managed/kernel.oxel) and [C# kernel](benches/managed/kernel.cs) each warm up eight times, then use `Stopwatch` to measure 32 million integer loop iterations inside the process. The benchmark checks that both kernels produce the same checksum and reports the median of five fresh processes per language. [Roslyn compiler options](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-options/code-generation) · [CoreCLR tiered compilation](https://learn.microsoft.com/en-us/dotnet/core/runtime-config/compilation)
+The C# comparison uses the same 1,024-function workload and launches the installed SDK's Roslyn compiler directly with optimizations and deterministic emission enabled. Both compilations use one worker and include compiler process startup and writing the assembly, with warm filesystem caches. The Roslyn measurement includes its managed host startup. SDK reference resolution happens during setup. The execution comparison uses a shared runtime configuration with tiered compilation disabled for both languages. It times launching equivalent console programs, including their initial JIT and output. For steady-state execution, the [Oxel kernel](crates/oxel-cli/benches/managed/kernel.oxel) and [C# kernel](crates/oxel-cli/benches/managed/kernel.cs) each warm up eight times, then use `Stopwatch` to measure 32 million integer loop iterations inside the process. The benchmark checks that both kernels produce the same checksum and reports the median of five fresh processes per language. [Roslyn compiler options](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-options/code-generation) · [CoreCLR tiered compilation](https://learn.microsoft.com/en-us/dotnet/core/runtime-config/compilation)
 
 Full generic CLR interoperability and a CoreCLR comptime worker are later work.
