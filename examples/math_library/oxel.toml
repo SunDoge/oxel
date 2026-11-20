@@ -2,3 +2,4 @@
 name = "Samples.Math"
 kind = "library"
 sources = ["math.oxel"]
+test_sources = ["math_tests.oxel"]

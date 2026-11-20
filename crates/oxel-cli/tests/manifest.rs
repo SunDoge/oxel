@@ -25,20 +25,26 @@ fn successful(output: Output) -> String {
 }
 
 #[test]
-fn test_runs_a_library_manifest_with_framework_references() {
+fn test_runs_separate_manifest_test_sources_with_framework_references() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();
     fs::write(
         project.join("oxel.toml"),
-        "[package]\nname = 'Samples.Suite'\nkind = 'library'\nframework = true\nsources = ['tests.oxel']\n",
+        "[package]\nname = 'Samples.Suite'\nkind = 'library'\nframework = true\nsources = ['library.oxel']\ntest_sources = ['specs/parse.oxel']\n",
     )
     .unwrap();
     fs::write(
-        project.join("tests.oxel"),
+        project.join("library.oxel"),
+        "internal fn parse(text: string) -> i32 { System.Int32.Parse(text) }",
+    )
+    .unwrap();
+    fs::create_dir(project.join("specs")).unwrap();
+    fs::write(
+        project.join("specs/parse.oxel"),
         r#"
             #[test]
             fn parses_an_integer() {
-                assert(System.Int32.Parse("30") == 30);
+                assert(parse("30") == 30);
             }
         "#,
     )
@@ -46,6 +52,19 @@ fn test_runs_a_library_manifest_with_framework_references() {
     assert_eq!(
         successful(cli(project, &["test"], false)),
         "ok parses_an_integer\n1 test, 0 failed\n",
+    );
+    fs::write(
+        project.join("specs/parse.oxel"),
+        "#[test] fn broken() { missing(); }",
+    )
+    .unwrap();
+    successful(cli(project, &["compile"], false));
+    let output = cli(project, &["test"], false);
+    assert!(!output.status.success());
+    let errors = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        errors.contains("parse.oxel:1:") && errors.contains("E0203"),
+        "{errors}"
     );
 }
 
@@ -159,6 +178,11 @@ fn manifest_errors_keep_the_relevant_file_and_span() {
             "[package]\nname = 'x'\nsources = ['main.oxel', './main.oxel']",
             Some("'./main.oxel'"),
             "duplicate source",
+        ),
+        (
+            "[package]\nname = 'x'\nsources = ['main.oxel']\ntest_sources = ['./main.oxel']",
+            Some("'./main.oxel'"),
+            "duplicate test source",
         ),
         (
             "[package]\nname = 'x'\nsources = ['main.oxel']\nreferenes = []",

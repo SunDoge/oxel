@@ -91,6 +91,9 @@ fn cli(run: &mut Run) -> ExitCode {
         framework |= manifest.framework;
         nuget = manifest.nuget;
         sources = manifest.sources;
+        if matches!(action, Action::Test(_)) {
+            sources.extend(manifest.test_sources);
+        }
         references.splice(..0, manifest.references);
         Some((
             path.as_path(),

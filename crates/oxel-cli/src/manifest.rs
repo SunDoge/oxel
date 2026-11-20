@@ -20,6 +20,7 @@ pub(super) struct Manifest {
     pub name: String,
     pub kind: AssemblyKind,
     pub sources: Vec<PathBuf>,
+    pub test_sources: Vec<PathBuf>,
     pub references: Vec<PathBuf>,
     pub native_libraries: Vec<NativeLibrary>,
     pub nuget: BTreeMap<String, String>,
@@ -40,6 +41,8 @@ struct Package {
     name: Spanned<String>,
     kind: Option<Spanned<String>>,
     sources: Spanned<Vec<Spanned<PathBuf>>>,
+    #[serde(default)]
+    test_sources: Vec<Spanned<PathBuf>>,
     #[serde(default)]
     references: Vec<Spanned<PathBuf>>,
     #[serde(default)]
@@ -96,11 +99,30 @@ impl Manifest {
                 "package.sources must list at least one file",
             ));
         }
+        let mut source_paths = HashSet::new();
+        let sources = resolve(
+            directory,
+            package.sources.into_inner(),
+            "source",
+            &mut source_paths,
+        )?;
+        let test_sources = resolve(
+            directory,
+            package.test_sources,
+            "test source",
+            &mut source_paths,
+        )?;
         Ok(Self {
             name: package.name.into_inner(),
             kind,
-            sources: resolve(directory, package.sources.into_inner(), "source")?,
-            references: resolve(directory, package.references, "reference")?,
+            sources,
+            test_sources,
+            references: resolve(
+                directory,
+                package.references,
+                "reference",
+                &mut HashSet::new(),
+            )?,
             native_libraries: native_libraries(directory, package.native_libraries)?,
             nuget: packages(nuget)?,
             framework: package.framework,
@@ -183,8 +205,8 @@ fn resolve(
     directory: &Path,
     entries: Vec<Spanned<PathBuf>>,
     kind: &str,
+    seen: &mut HashSet<PathBuf>,
 ) -> Result<Vec<PathBuf>, Diagnostic> {
-    let mut seen = HashSet::new();
     entries
         .into_iter()
         .map(|entry| {

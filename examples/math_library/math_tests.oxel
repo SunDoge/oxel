@@ -1,0 +1,10 @@
+#[test]
+fn adds_signed_numbers() {
+    assert(add(-12, 42) == 30);
+}
+
+#[test]
+fn evaluates_an_internal_operation() {
+    let operation = Operation.Add(Operands { left: 18, right: 12 });
+    assert(evaluate(operation) == 30);
+}

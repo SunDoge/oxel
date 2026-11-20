@@ -81,10 +81,13 @@ Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names 
 [package]
 name = "geometry-demo"
 sources = ["main.oxel", "geometry.oxel"]
+# test_sources = ["tests/geometry.oxel"]
 # references = ["lib/GeometrySupport.dll"]
 ```
 
 Use `oxel.toml` to name a package and list its source files and optional local CLR assemblies. The compiler reads source files in the listed order and resolves relative paths from the manifest directory. Additional `--reference` paths resolve from the calling directory. Each executable package has one `main` function.
+
+`oxel test` appends the optional `test_sources` list to `sources`, in manifest order. Both lists use paths relative to the manifest, and each file may appear only once. Files listed under `test_sources` can declare test helpers that are available to the test module.
 
 ```sh
 oxel check --manifest-path examples/project/oxel.toml
@@ -103,6 +106,7 @@ Set `kind = "library"` under `[package]` to build a managed CLR library. The pac
 ```sh
 oxel check --manifest-path examples/math_library/oxel.toml
 oxel compile --manifest-path examples/math_library/oxel.toml
+oxel test --manifest-path examples/math_library/oxel.toml
 ```
 
 The [example manifest](examples/math_library/oxel.toml) writes `target/oxel/lib/Samples.Math.dll` inside the project directory. Add that DLL as a .NET assembly reference and call `Samples.Math.Program.add(10, 20)` from C# or Oxel. For an Oxel consumer, pass the path using `--reference`. With SDK or NuGet references, use the path printed by `compile` and provide the library's runtime dependencies to the consuming project. The executable host selects the runtime and can be published through Native AOT.
