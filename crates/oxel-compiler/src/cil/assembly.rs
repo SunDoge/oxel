@@ -150,7 +150,7 @@ pub(super) fn write(
             function.signature.result,
             Invocation::Static,
             function.signature.type_arity,
-            parameters.iter().map(|parameter| parameter.mode()),
+            parameters.iter().map(|parameter| (parameter.mode(), false)),
         );
         let param_list = metadata.add_parameters(&function.signature, parameters);
         let (flags, name) = if method_index < program.functions.len() {
@@ -293,6 +293,7 @@ pub(super) struct Tables<'refs> {
     custom_attributes: Vec<CustomAttributeRow>,
     nullable_type: Option<u32>,
     volatile_type: Option<u32>,
+    in_attribute_type: Option<u32>,
     create_instance: Option<u32>,
     string_from_object: Option<u32>,
     error_writer_members: Option<(u32, u32)>,
@@ -445,6 +446,7 @@ impl<'refs> Tables<'refs> {
             custom_attributes: Vec::new(),
             nullable_type: None,
             volatile_type: None,
+            in_attribute_type: None,
             create_instance: None,
             string_from_object: None,
             error_writer_members: None,
@@ -857,7 +859,12 @@ impl<'refs> Tables<'refs> {
             *result,
             invocation,
             *type_arity,
-            method.modes.iter().copied(),
+            method
+                .modes
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(index, mode)| (mode, method.required_ins.binary_search(&index).is_ok())),
         );
         let row = self.push_member_for(parent, &method.name, signature);
         self.member_indices.insert((id, owner), row);
@@ -890,6 +897,17 @@ impl<'refs> Tables<'refs> {
                 resolution_scope: index(TableId::AssemblyRef, 1), // System.Runtime
                 type_name: self.strings.add("IsVolatile"),
                 type_namespace: self.strings.add("System.Runtime.CompilerServices"),
+            });
+            self.type_refs.len() as u32
+        })
+    }
+
+    fn in_attribute_type(&mut self) -> u32 {
+        *self.in_attribute_type.get_or_insert_with(|| {
+            self.type_refs.push(TypeRefRow {
+                resolution_scope: index(TableId::AssemblyRef, 1), // System.Runtime
+                type_name: self.strings.add("InAttribute"),
+                type_namespace: self.strings.add("System.Runtime.InteropServices"),
             });
             self.type_refs.len() as u32
         })
@@ -1111,7 +1129,7 @@ impl<'refs> Tables<'refs> {
         result: Type,
         invocation: Invocation,
         type_arity: u16,
-        modes: impl IntoIterator<Item = ArgumentMode>,
+        modes: impl IntoIterator<Item = (ArgumentMode, bool)>,
     ) -> u32 {
         let mut signature = Writer::new();
         let has_this = if invocation == Invocation::Static {
@@ -1128,7 +1146,12 @@ impl<'refs> Tables<'refs> {
         self.write_type(&mut signature, result);
         let mut modes = modes.into_iter();
         for &parameter in parameters {
-            if modes.next().is_some_and(|mode| mode != ArgumentMode::Value) {
+            let (mode, required_in) = modes.next().unwrap_or((ArgumentMode::Value, false));
+            if required_in {
+                signature.write_u8(0x1f); // ELEMENT_TYPE_CMOD_REQD
+                signature.write_compressed_uint((self.in_attribute_type() << 2) | 1); // TypeRef
+            }
+            if mode != ArgumentMode::Value {
                 signature.write_u8(0x10); // ELEMENT_TYPE_BYREF
             }
             self.write_type(&mut signature, parameter);

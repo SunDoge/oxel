@@ -158,6 +158,8 @@ pub(crate) struct Method {
     pub hide_by_name: bool,
     pub defaults: Box<[MetadataConstant]>,
     pub modes: Box<[ArgumentMode]>,
+    /// Parameter positions carrying modreq(InAttribute) in the imported signature.
+    pub required_ins: Box<[usize]>,
     pub parameter_array: bool,
 }
 
@@ -219,6 +221,7 @@ struct PendingMethod {
     parameters: Vec<SignatureType>,
     defaults: Box<[MetadataConstant]>,
     modes: Box<[ArgumentMode]>,
+    required_ins: Box<[usize]>,
     parameter_array: bool,
 }
 
@@ -226,6 +229,7 @@ struct ParsedMethodSignature {
     parameters: Vec<SignatureType>,
     result: SignatureType,
     modes: Vec<ArgumentMode>,
+    required_ins: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -652,8 +656,10 @@ impl References {
                     mut parameters,
                     mut result,
                     mut modes,
+                    required_ins,
                 }) = metadata.blobs.get(method.signature).ok().and_then(|blob| {
                     signature(
+                        &metadata,
                         blob,
                         invocation,
                         type_arity,
@@ -666,7 +672,10 @@ impl References {
                     continue;
                 };
                 if !modes.is_empty()
-                    && !classify_byrefs(&metadata, method_row, &readonly_parameters, &mut modes)
+                    && (!classify_byrefs(&metadata, method_row, &readonly_parameters, &mut modes)
+                        || required_ins
+                            .iter()
+                            .any(|&index| modes[index] != ArgumentMode::In))
                 {
                     continue;
                 }
@@ -777,6 +786,7 @@ impl References {
                         &modes,
                     ),
                     modes: modes.into_boxed_slice(),
+                    required_ins: required_ins.into_boxed_slice(),
                     parameters,
                     parameter_array,
                 });
@@ -1067,6 +1077,7 @@ impl References {
             mut parameter_nullability,
             defaults,
             modes,
+            required_ins,
             parameter_array,
             ..
         } = pending;
@@ -1112,6 +1123,7 @@ impl References {
             hide_by_name,
             defaults,
             modes,
+            required_ins,
             parameter_array,
         });
     }
@@ -1509,7 +1521,10 @@ fn classify_byrefs(
             match (row.flags & (IN | OUT), readonly.get(&id)) {
                 (0, None) => {}
                 (OUT, None) => *mode = ArgumentMode::Out,
-                (IN, Some(attributes::ReadonlyParameter::In)) => *mode = ArgumentMode::In,
+                (0 | IN, Some(attributes::ReadonlyParameter::In))
+                | (IN, Some(attributes::ReadonlyParameter::RequiresLocation)) => {
+                    *mode = ArgumentMode::In;
+                }
                 _ => return false,
             }
         }
@@ -1518,6 +1533,7 @@ fn classify_byrefs(
 }
 
 fn signature(
+    metadata: &Metadata,
     blob: &[u8],
     invocation: Invocation,
     type_arity: u16,
@@ -1548,13 +1564,33 @@ fn signature(
     }
     let mut parameters = Vec::with_capacity(count);
     let mut modes = Vec::new();
+    let mut required_ins = Vec::new();
     for index in 0..count {
+        let required_in = reader.peek_u8().ok() == Some(0x1f); // ELEMENT_TYPE_CMOD_REQD
+        if required_in {
+            reader.read_u8().ok()?;
+            let modifier = CodedIndex::decode(
+                CodedIndexKind::TypeDefOrRef,
+                reader.read_compressed_uint().ok()?,
+            );
+            if !framework_type_ref(
+                metadata,
+                modifier,
+                "System.Runtime.InteropServices",
+                "InAttribute",
+            ) {
+                return None;
+            }
+            required_ins.push(index);
+        }
         if reader.peek_u8().ok() == Some(0x10) {
             reader.read_u8().ok()?; // ELEMENT_TYPE_BYREF
             if modes.is_empty() {
                 modes.resize(count, ArgumentMode::Value);
             }
             modes[index] = ArgumentMode::Ref;
+        } else if required_in {
+            return None;
         }
         let ty = signature_type(&mut reader, type_arity, owner_arity, types, type_refs, 0)?;
         if matches!(ty, SignatureType::Primitive(Type::Void)) {
@@ -1566,6 +1602,7 @@ fn signature(
         parameters,
         result,
         modes,
+        required_ins,
     })
 }
 

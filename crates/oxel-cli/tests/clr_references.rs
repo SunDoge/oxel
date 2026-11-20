@@ -2168,13 +2168,21 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         "1.0.0.0",
         r#"
         namespace ByRef;
+        public interface IRead {
+            int Read(in int value, int offset, in int scale);
+            int ReadLocation(ref readonly int value);
+        }
         public class Base {
             public int Pick(int value) => value;
+            public virtual int Read(in int value, int offset, in int scale) => 0;
         }
-        public class Reader : Base {
+        public class Reader : Base, IRead {
             public Reader(out int code) => code = 10;
             public int Pick(ref int value) => ++value;
+            public override int Read(in int value, int offset, in int scale) => (value + offset) * scale;
+            public int ReadLocation(ref readonly int value) => value + 3;
         }
+        public delegate int ReadDelegate(in int value);
         public struct Cursor {
             private int value;
             public Cursor(int value) => this.value = value;
@@ -2190,7 +2198,8 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public static int Pick(int value) => value;
             public static int Pick(in int value) => value + 1;
             public static int Length(in string text) => text.Length;
-            public static void Location(ref readonly int value) { }
+            public static int Location(ref readonly int value) => value + 2;
+            public static ReadDelegate GetDelegate() => ReadOnly;
             public static void InputFlag([System.Runtime.InteropServices.In] ref int value) => value++;
         }
         "#,
@@ -2238,13 +2247,24 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             System.Console.WriteLine(ByRef.Api.Pick(in count));
             let word = "hello";
             System.Console.WriteLine(ByRef.Api.Length(in word));
+            System.Console.WriteLine(ByRef.Api.Location(in number));
+
+            let base_reader: ByRef.Base = reader;
+            let interface_reader: ByRef.IRead = reader;
+            let scale = 2;
+            System.Console.WriteLine(base_reader.Read(in number, 2, in scale));
+            System.Console.WriteLine(interface_reader.Read(in number, 3, in scale));
+            System.Console.WriteLine(interface_reader.ReadLocation(in number));
+            let callback = ByRef.Api.GetDelegate();
+            System.Console.WriteLine(callback(in number));
         }
         "#,
     );
     assert_eq!(
         successful(output).lines().collect::<Vec<_>>(),
         [
-            "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "5"
+            "30", "11", "11", "30", "yes", "cleared", "empty", "31", "11", "12", "5", "32", "64",
+            "66", "33", "31"
         ]
     );
 
@@ -2264,7 +2284,7 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
         ("let x: i32; ByRef.Api.ReadOnly(in x);", "E0321"),
         ("let x: i64 = 1; ByRef.Api.ReadOnly(in x);", "E0205"),
         ("let x: string? = null; ByRef.Api.Length(in x);", "E0205"),
-        ("let x = 1; ByRef.Api.Location(in x);", "E0203"),
+        ("let mut x = 1; ByRef.Api.Location(ref x);", "E0213"),
         ("let x = 1; ByRef.Api.InputFlag(in x);", "E0203"),
         (
             "let code: i32; let reader = new ByRef.Reader(out code); let mut x: i32; reader.Pick(ref x);",
