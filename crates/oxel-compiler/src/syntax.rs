@@ -686,6 +686,12 @@ pub(crate) enum TestAttribute {
     Ignored,
 }
 
+impl Function<'_> {
+    pub fn matching_test(&self, filter: &str) -> Option<TestAttribute> {
+        self.test.filter(|_| self.name.contains(filter))
+    }
+}
+
 pub(crate) struct FunctionParameter<'src> {
     pub name: &'src str,
     pub span: Span,

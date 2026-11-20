@@ -31,12 +31,11 @@ pub(super) fn runner<'src>(
     let mut statements = vec![save_failures(integer(0))];
     let mut count = 0;
     let mut ignored = 0;
-    for (index, test) in functions
-        .iter()
-        .enumerate()
-        .filter(|(_, test)| test.test.is_some() && test.name.contains(options.filter))
-    {
-        if test.test == Some(syntax::TestAttribute::Ignored) && !options.include_ignored {
+    for (index, test) in functions.iter().enumerate() {
+        let Some(attribute) = test.matching_test(options.filter) else {
+            continue;
+        };
+        if attribute == syntax::TestAttribute::Ignored && !options.include_ignored {
             statements.push(print(string(format!("ignored {}", test.name))));
             ignored += 1;
             continue;

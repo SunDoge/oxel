@@ -1,9 +1,34 @@
 use std::{fs, path::Path, process::Command};
 
-use oxel::{References, Span, check_project, compile_project, inspect_project};
+use oxel::{
+    References, Span, check_project, compile_project, discover_test_project, inspect_project,
+};
 
 const MAIN: &str = include_str!("../../../examples/project/main.oxel");
 const GEOMETRY: &str = include_str!("../../../examples/project/geometry.oxel");
+
+#[test]
+fn discovered_tests_have_source_local_name_spans() {
+    let sources = [
+        "#[test] fn inline() {}",
+        "",
+        "// 🌍\n#[ignore]\n#[test] fn external() {}",
+    ];
+    let tests = discover_test_project(&sources, &References::default(), "").unwrap();
+    assert_eq!(
+        tests
+            .iter()
+            .map(|test| (test.name, test.source, test.ignored))
+            .collect::<Vec<_>>(),
+        [("inline", 0, false), ("external", 2, true)]
+    );
+    for test in tests {
+        assert_eq!(
+            &sources[test.source][test.span.start..test.span.end],
+            test.name
+        );
+    }
+}
 
 #[test]
 fn compiles_and_runs_cross_file_calls_and_structs() {

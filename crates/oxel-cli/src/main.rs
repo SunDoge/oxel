@@ -145,8 +145,10 @@ fn cli(run: &mut Run) -> ExitCode {
         };
         let resolution = if framework
             && nuget.is_empty()
-            && matches!(action, Action::Check { .. } | Action::Lsp { .. })
-        {
+            && matches!(
+                action,
+                Action::Check { .. } | Action::Lsp { .. } | Action::Test { list: true, .. }
+            ) {
             sdk::probe_framework(path, name)
                 .ok()
                 .map(sdk::Resolution::Framework)
@@ -282,6 +284,24 @@ fn execute(
             Err(errors) => format.report(paths, &sources, errors),
         };
     }
+    if let Action::Test {
+        list: true, filter, ..
+    } = &action
+    {
+        let tests = match oxel::discover_test_project(
+            &sources,
+            &references,
+            filter.as_deref().unwrap_or_default(),
+        ) {
+            Ok(tests) => tests,
+            Err(errors) => return format.report(paths, &sources, errors),
+        };
+        for test in tests {
+            let suffix = if test.ignored { " (ignored)" } else { "" };
+            println!("{}: test{suffix}", test.name);
+        }
+        return ExitCode::SUCCESS;
+    }
     let (origin, directory, name) = if let Some(Package { manifest, name, .. }) = package {
         (manifest, manifest::directory(manifest), name)
     } else {
@@ -294,6 +314,7 @@ fn execute(
         Action::Test {
             filter,
             include_ignored,
+            ..
         } => oxel::compile_test_project_with_options(
             &sources,
             name,

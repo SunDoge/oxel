@@ -77,6 +77,8 @@ Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names 
 
 Add `#[ignore]` alongside `#[test]` to skip a test by default, for example when it requires a service running locally. Skipped tests still undergo type checking. Use `oxel test --include-ignored` to run them as well. Combine both flags to limit execution by name.
 
+Use `oxel test --list` to check the test module and print one line per test in source order. The output is `name: test` or `name: test (ignored)`. The listing includes ignored tests and accepts `--filter`. Pure Oxel modules can list tests without a .NET SDK or runtime. Rust tools can use `oxel::discover_test_project` to get the test names, source spans and ignore flags.
+
 Use `oxel check --tests examples/unit_tests.oxel` to check a test module without generating or running an assembly. It accepts modules without `main` and includes `test_sources` for manifest projects. Pure Oxel modules can use this command without a .NET SDK or runtime.
 
 For editor diagnostics and navigation between tests and library code, start the language server with `oxel lsp --tests --manifest-path path/to/oxel.toml`.

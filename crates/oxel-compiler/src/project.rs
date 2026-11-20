@@ -1,6 +1,6 @@
 //! A compilation unit with independently parsed files and a shared symbol table.
 
-use crate::{Diagnostic, References, cil, hir, syntax};
+use crate::{Diagnostic, References, Span, cil, hir, syntax};
 
 /// Selects the managed entry point and namespace of a compiled module.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -35,6 +35,17 @@ pub struct TestOptions<'a> {
     pub include_ignored: bool,
 }
 
+/// A declared unit test in a checked project.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnitTest<'src> {
+    pub name: &'src str,
+    pub ignored: bool,
+    /// Index in the original source slice.
+    pub source: usize,
+    /// Byte span of the name within that source.
+    pub span: Span,
+}
+
 /// Type-checks all sources as one module with a single executable entry point.
 pub fn check_project(
     sources: &[&str],
@@ -58,6 +69,36 @@ pub fn check_test_project(
     references: &References,
 ) -> Result<(), Vec<SourceDiagnostic>> {
     Project::new(sources).analyze(|module| hir::check(module, references, None))
+}
+
+/// Checks the entire test module and lists matching tests in source order.
+pub fn discover_test_project<'src>(
+    sources: &[&'src str],
+    references: &References,
+    filter: &str,
+) -> Result<Vec<UnitTest<'src>>, Vec<SourceDiagnostic>> {
+    let project = Project::new(sources);
+    project.analyze(|module| {
+        let tests = module
+            .functions
+            .iter()
+            .filter_map(|function| {
+                let attribute = function.matching_test(filter)?;
+                let (source, span) = project
+                    .map
+                    .local_span(function.name_span)
+                    .expect("test source");
+                Some(UnitTest {
+                    name: function.name,
+                    ignored: attribute == syntax::TestAttribute::Ignored,
+                    source,
+                    span,
+                })
+            })
+            .collect();
+        hir::check(module, references, None)?;
+        Ok(tests)
+    })
 }
 
 /// Compiles an ordered set of files as one managed executable.
@@ -133,13 +174,13 @@ fn compile(
         .map_err(|error| vec![project.map.locate(error)])
 }
 
-pub(crate) struct Project<'src> {
-    sources: &'src [&'src str],
+pub(crate) struct Project<'sources, 'src> {
+    sources: &'sources [&'src str],
     pub map: SourceMap,
 }
 
-impl<'src> Project<'src> {
-    pub fn new(sources: &'src [&'src str]) -> Self {
+impl<'sources, 'src> Project<'sources, 'src> {
+    pub fn new(sources: &'sources [&'src str]) -> Self {
         let mut cursor = 0;
         let bases = sources
             .iter()

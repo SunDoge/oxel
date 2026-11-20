@@ -81,12 +81,15 @@ struct RunInputs {
 struct TestInputs {
     #[usage(flatten)]
     build: BuildInputs,
-    /// Run only tests whose names contain this case-sensitive text.
+    /// Select tests whose names contain this case-sensitive text.
     #[usage(long)]
     filter: Option<String>,
     /// Run matching tests marked with #[ignore] as well.
     #[usage(long)]
     include_ignored: bool,
+    /// List matching tests without running them.
+    #[usage(long)]
+    list: bool,
 }
 
 #[derive(Args)]
@@ -118,6 +121,7 @@ pub(super) enum Action {
     Test {
         filter: Option<String>,
         include_ignored: bool,
+        list: bool,
     },
     Publish,
     Restore,
@@ -181,6 +185,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
             Action::Test {
                 filter: test.filter,
                 include_ignored: test.include_ignored,
+                list: test.list,
             },
             test.build,
         ),

@@ -50,6 +50,10 @@ fn test_runs_separate_manifest_test_sources_with_framework_references() {
     )
     .unwrap();
     assert_eq!(
+        successful(cli(project, &["test", "--list"], false)),
+        "parses_an_integer: test\n",
+    );
+    assert_eq!(
         successful(cli(project, &["test"], false)),
         "ok parses_an_integer\n1 test, 0 failed\n",
     );
@@ -60,7 +64,7 @@ fn test_runs_separate_manifest_test_sources_with_framework_references() {
     )
     .unwrap();
     successful(cli(project, &["compile"], false));
-    for args in [&["test"][..], &["check", "--tests"]] {
+    for args in [&["test"][..], &["check", "--tests"], &["test", "--list"]] {
         let output = cli(project, args, false);
         assert!(!output.status.success());
         let errors = String::from_utf8(output.stderr).unwrap();
@@ -69,6 +73,44 @@ fn test_runs_separate_manifest_test_sources_with_framework_references() {
             "{errors}"
         );
     }
+}
+
+#[test]
+fn test_listing_filters_in_source_order_without_loading_coreclr() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    fs::write(
+        project.join("oxel.toml"),
+        "[package]\nname = 'Suite'\nkind = 'library'\nsources = ['library.oxel']\ntest_sources = ['suite.oxel']",
+    )
+    .unwrap();
+    fs::write(project.join("library.oxel"), "#[test] fn inline_test() {}").unwrap();
+    let suite = project.join("suite.oxel");
+    fs::write(
+        &suite,
+        "#[test] #[ignore] fn service_test() { assert(false); } #[test] fn sample() {}",
+    )
+    .unwrap();
+    assert_eq!(
+        successful(cli(project, &["test", "--list"], true)),
+        "inline_test: test\nservice_test: test (ignored)\nsample: test\n",
+    );
+    assert_eq!(
+        successful(cli(project, &["test", "--list", "--filter=service"], true)),
+        "service_test: test (ignored)\n",
+    );
+    assert!(successful(cli(project, &["test", "--list", "--filter=SERVICE"], true)).is_empty());
+    assert!(!project.join("target").exists());
+
+    fs::write(&suite, "#[test] #[ignore] fn broken() { missing(); }").unwrap();
+    let rejected = cli(project, &["test", "--list", "--filter=inline"], true);
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let error = String::from_utf8(rejected.stderr).unwrap();
+    assert!(
+        error.contains("suite.oxel:1:") && error.contains("E0203"),
+        "{error}"
+    );
 }
 
 #[test]
