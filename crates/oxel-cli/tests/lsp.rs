@@ -1629,6 +1629,20 @@ fn library_lsp_treats_main_as_an_ordinary_function() {
     let mut client = Client::launch(command, true, false);
     client.open(uri.as_str(), source);
     assert_eq!(client.diagnostics()["diagnostics"], json!([]));
+    let parameter_rename = client.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": uri.as_str()},
+            "position": {"line": 0, "character": source.find("flag").unwrap()},
+            "newName": "state"
+        }),
+    );
+    let edits = parameter_rename["changes"][uri.as_str()]
+        .as_array()
+        .unwrap();
+    assert_eq!(edits.len(), 2);
+    assert!(edits.iter().all(|edit| edit["newText"] == "state"));
+
     let rename = client.request(
         "textDocument/rename",
         json!({

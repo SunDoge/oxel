@@ -146,7 +146,8 @@ pub fn inspect_project(sources: &[&str], references: &References) -> Vec<Documen
     inspect_project_with_kind(sources, references, AssemblyKind::Executable)
 }
 
-fn inspect_project_with_kind(
+/// Analyzes fresh source snapshots using the selected assembly's entry point rules.
+pub fn inspect_project_with_kind(
     sources: &[&str],
     references: &References,
     kind: AssemblyKind,

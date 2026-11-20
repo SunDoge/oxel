@@ -4,7 +4,10 @@ use lsp_server::ErrorCode;
 use lsp_types::{
     PrepareRenameResponse, RenameParams, TextDocumentPositionParams, TextEdit, Uri, WorkspaceEdit,
 };
-use oxel::{Occurrence, OccurrenceKind, Span, SymbolKind, inspect_project, valid_identifier};
+use oxel::{
+    AssemblyKind, Occurrence, OccurrenceKind, Span, SymbolKind, inspect_project_with_kind,
+    valid_identifier,
+};
 
 use super::{Session, document::Document};
 
@@ -40,7 +43,7 @@ pub(super) struct SymbolOccurrences<'a> {
     binding: BindingSite,
     document: &'a Document,
     selection: Span,
-    reserves_main: bool,
+    kind: AssemblyKind,
 }
 
 impl<'a> SymbolOccurrences<'a> {
@@ -88,7 +91,7 @@ impl<'a> SymbolOccurrences<'a> {
         };
         valid_identifier(name)
             && name != "_"
-            && !(self.reserves_main && name == "main" && self.is_function())
+            && !(self.kind == AssemblyKind::Executable && name == "main" && self.is_function())
             && self
                 .document
                 .text
@@ -130,7 +133,7 @@ impl Session<'_> {
             binding,
             document,
             selection: occurrence.span,
-            reserves_main: project.is_none() || self.kind == oxel::AssemblyKind::Executable,
+            kind: project.map_or(AssemblyKind::Executable, |_| self.kind),
         })
     }
 
@@ -160,7 +163,7 @@ impl Session<'_> {
             .filter(SymbolOccurrences::can_rename)
             .ok_or_else(|| rejected("Rename requires a source symbol in an error-free module"))?;
         let old_name = symbol.name().expect("source binding");
-        if symbol.reserves_main && new_name == "main" && symbol.is_function() {
+        if symbol.kind == AssemblyKind::Executable && new_name == "main" && symbol.is_function() {
             return Err(rejected("The name 'main' is reserved for the entry point"));
         }
         if old_name == new_name {
@@ -222,7 +225,7 @@ impl Session<'_> {
             .iter()
             .map(|document| document.text.as_str())
             .collect::<Vec<_>>();
-        let analyses = inspect_project(&sources, self.references);
+        let analyses = inspect_project_with_kind(&sources, self.references, symbol.kind);
         for ((_, original), (updated, analysis)) in
             symbol.files.iter().zip(revised.iter().zip(analyses))
         {
