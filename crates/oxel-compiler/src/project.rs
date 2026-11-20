@@ -40,7 +40,15 @@ pub fn check_project_with_kind(
     references: &References,
     kind: AssemblyKind,
 ) -> Result<(), Vec<SourceDiagnostic>> {
-    Project::new(sources).analyze(|module| hir::check(module, references, kind))
+    Project::new(sources).analyze(|module| hir::check(module, references, Some(kind)))
+}
+
+/// Checks the tests and their helpers as one module without an application entry point.
+pub fn check_test_project(
+    sources: &[&str],
+    references: &References,
+) -> Result<(), Vec<SourceDiagnostic>> {
+    Project::new(sources).analyze(|module| hir::check(module, references, None))
 }
 
 /// Compiles an ordered set of files as one managed executable.

@@ -37,7 +37,7 @@ enum Command {
     /// Generate a managed .NET assembly.
     Compile(BuildInputs),
     /// Check syntax and types.
-    Check(BuildInputs),
+    Check(CheckInputs),
     /// Compile and run on CoreCLR.
     Run(RunInputs),
     /// Compile and run Oxel unit tests on CoreCLR.
@@ -57,6 +57,15 @@ struct BuildInputs {
     reference: Vec<PathBuf>,
     /// Source files. When omitted, read oxel.toml in the working directory.
     sources: Vec<PathBuf>,
+}
+
+#[derive(Args)]
+struct CheckInputs {
+    #[usage(flatten)]
+    build: BuildInputs,
+    /// Check the unit test module.
+    #[usage(long)]
+    tests: bool,
 }
 
 #[derive(Args)]
@@ -96,7 +105,7 @@ struct EditorInputs {
 
 pub(super) enum Action {
     Compile,
-    Check,
+    Check { tests: bool },
     Run,
     Test(Option<String>),
     Publish,
@@ -150,7 +159,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
     let mut arguments = Vec::new();
     let (action, build) = match parsed.command {
         Command::Compile(build) => (Action::Compile, build),
-        Command::Check(build) => (Action::Check, build),
+        Command::Check(check) => (Action::Check { tests: check.tests }, check.build),
         Command::Run(run) => {
             arguments = run.arguments;
             (Action::Run, run.build)

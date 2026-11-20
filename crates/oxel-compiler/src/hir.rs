@@ -1414,9 +1414,10 @@ type Checked<T> = Result<T, Diagnostic>;
 pub(crate) fn check(
     file: syntax::Module<'_, '_>,
     references: &References,
-    kind: AssemblyKind,
+    kind: Option<AssemblyKind>,
 ) -> Result<(), Vec<Diagnostic>> {
-    prepare(file, references, EntryPoint::for_build(kind), None, None)?.check_runtime(drop, |()| {})
+    let entry = kind.map_or(EntryPoint::None, EntryPoint::for_build);
+    prepare(file, references, entry, None, None)?.check_runtime(drop, |()| {})
 }
 
 pub(crate) fn lower<'src>(

@@ -14,8 +14,9 @@ pub use analysis::{
 pub use clr::{References, valid_assembly_name};
 pub use hir::{Type, clr_function_signatures};
 pub use project::{
-    AssemblyKind, SourceDiagnostic, check_project, check_project_with_kind, compile_project,
-    compile_project_with_kind, compile_test_project, compile_test_project_filtered,
+    AssemblyKind, SourceDiagnostic, check_project, check_project_with_kind, check_test_project,
+    compile_project, compile_project_with_kind, compile_test_project,
+    compile_test_project_filtered,
 };
 pub use syntax::{CallSite, call_site, declared_function_signature, valid_identifier};
 
@@ -181,7 +182,7 @@ pub fn check_with_references(source: &str, references: &References) -> Result<()
     hir::check(
         syntax::Module::new([&file]),
         references,
-        AssemblyKind::Executable,
+        Some(AssemblyKind::Executable),
     )
 }
 

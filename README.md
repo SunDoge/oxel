@@ -75,6 +75,8 @@ Run `oxel test examples/unit_tests.oxel`, or run `oxel test` in a directory with
 
 Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names contain `adds`. Matching is case-sensitive and the compiler checks the whole test module before running the selected tests.
 
+Use `oxel check --tests examples/unit_tests.oxel` to check a test module without generating or running an assembly. It accepts modules without `main` and includes `test_sources` for manifest projects. Pure Oxel modules can use this command without a .NET SDK or runtime.
+
 ## Project manifest
 
 ```toml
@@ -87,7 +89,7 @@ sources = ["main.oxel", "geometry.oxel"]
 
 Use `oxel.toml` to name a package and list its source files and optional local CLR assemblies. The compiler reads source files in the listed order and resolves relative paths from the manifest directory. Additional `--reference` paths resolve from the calling directory. Each executable package has one `main` function.
 
-`oxel test` appends the optional `test_sources` list to `sources`, in manifest order. Both lists use paths relative to the manifest, and each file may appear only once. Files listed under `test_sources` can declare test helpers that are available to the test module.
+`oxel test` and `oxel check --tests` append the optional `test_sources` list to `sources`, in manifest order. Both lists use paths relative to the manifest, and each file may appear only once. Files listed under `test_sources` can declare test helpers that are available to the test module.
 
 ```sh
 oxel check --manifest-path examples/project/oxel.toml

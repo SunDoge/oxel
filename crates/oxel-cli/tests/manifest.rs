@@ -53,18 +53,45 @@ fn test_runs_separate_manifest_test_sources_with_framework_references() {
         successful(cli(project, &["test"], false)),
         "ok parses_an_integer\n1 test, 0 failed\n",
     );
+    successful(cli(project, &["check", "--tests"], false));
     fs::write(
         project.join("specs/parse.oxel"),
         "#[test] fn broken() { missing(); }",
     )
     .unwrap();
     successful(cli(project, &["compile"], false));
-    let output = cli(project, &["test"], false);
-    assert!(!output.status.success());
-    let errors = String::from_utf8(output.stderr).unwrap();
+    for args in [&["test"][..], &["check", "--tests"]] {
+        let output = cli(project, args, false);
+        assert!(!output.status.success());
+        let errors = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            errors.contains("parse.oxel:1:") && errors.contains("E0203"),
+            "{errors}"
+        );
+    }
+}
+
+#[test]
+fn check_tests_needs_neither_main_nor_coreclr() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    fs::write(
+        project.join("suite.oxel"),
+        "#[test] fn sample() { assert(true); }",
+    )
+    .unwrap();
+    assert_eq!(
+        successful(cli(project, &["check", "--tests", "suite.oxel"], true)),
+        "",
+    );
+    assert!(!project.join("target").exists());
+
+    let ordinary = cli(project, &["check", "suite.oxel"], true);
+    assert!(!ordinary.status.success());
     assert!(
-        errors.contains("parse.oxel:1:") && errors.contains("E0203"),
-        "{errors}"
+        String::from_utf8(ordinary.stderr)
+            .unwrap()
+            .contains("E0206")
     );
 }
 

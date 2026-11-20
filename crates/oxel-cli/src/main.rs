@@ -91,7 +91,7 @@ fn cli(run: &mut Run) -> ExitCode {
         framework |= manifest.framework;
         nuget = manifest.nuget;
         sources = manifest.sources;
-        if matches!(action, Action::Test(_)) {
+        if matches!(action, Action::Test(_) | Action::Check { tests: true }) {
             sources.extend(manifest.test_sources);
         }
         references.splice(..0, manifest.references);
@@ -140,14 +140,16 @@ fn cli(run: &mut Run) -> ExitCode {
         } else {
             (Path::new(manifest::DEFAULT), "oxel_editor")
         };
-        let resolution =
-            if framework && nuget.is_empty() && matches!(action, Action::Check | Action::Lsp) {
-                sdk::probe_framework(path, name)
-                    .ok()
-                    .map(sdk::Resolution::Framework)
-            } else {
-                None
-            };
+        let resolution = if framework
+            && nuget.is_empty()
+            && matches!(action, Action::Check { .. } | Action::Lsp)
+        {
+            sdk::probe_framework(path, name)
+                .ok()
+                .map(sdk::Resolution::Framework)
+        } else {
+            None
+        };
         let runtime_kind = if matches!(action, Action::Test(_)) {
             AssemblyKind::Executable
         } else {
@@ -266,8 +268,13 @@ fn execute(
             Err(error) => return error,
         };
     let kind = package.map_or(AssemblyKind::Executable, |package| package.kind);
-    if matches!(action, Action::Check) {
-        return match oxel::check_project_with_kind(&sources, &references, kind) {
+    if let Action::Check { tests } = action {
+        let checked = if tests {
+            oxel::check_test_project(&sources, &references)
+        } else {
+            oxel::check_project_with_kind(&sources, &references, kind)
+        };
+        return match checked {
             Ok(()) => ExitCode::SUCCESS,
             Err(errors) => format.report(paths, &sources, errors),
         };
