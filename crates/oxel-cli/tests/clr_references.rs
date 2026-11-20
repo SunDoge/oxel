@@ -2198,6 +2198,9 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
             public static int ReadOnly(in int input) => input + 1;
             public static int Pick(int value) => value;
             public static int Pick(in int value) => value + 1;
+            public static int ReadEither(in int value) => value;
+            public static bool ReadEither(in bool value) => value;
+            public static void ByValue(int value) { }
             public static int Length(in string text) => text.Length;
             public static int MaybeLength(in string? text) => text?.Length ?? 0;
             public static T Echo<T>(in T value) => value;
@@ -2225,6 +2228,39 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
     assert_eq!(
         oxel::clr_function_signatures("ByRef.Api.ReadOnly", &symbols)[0].label,
         "ByRef.Api.ReadOnly(&System.Int32) -> System.Int32"
+    );
+    for (call, index, location, requirement) in [
+        ("ReadEither(value)", 1, "value", "an argument marked '&'"),
+        ("Clear(text)", 1, "text", "an argument marked '&mut'"),
+        ("Set(value)", 1, "value", "an argument marked 'out'"),
+        ("ByValue(&value)", 1, "&value", "a by-value argument"),
+        ("Set(out value, &value)", 2, "&value", "a by-value argument"),
+    ] {
+        let source = format!(
+            "fn main() {{ let mut value = 1; let mut text: string? = null; ByRef.Api.{call}; }}"
+        );
+        let diagnostics = oxel::check_with_references(&source, &symbols).unwrap_err();
+        let error = &diagnostics[0];
+        assert_eq!(error.code, "E0213", "{call}");
+        assert_eq!(
+            &source[error.span.start..error.span.end],
+            location,
+            "{call}"
+        );
+        assert!(
+            error
+                .message
+                .starts_with(&format!("parameter {index} of '"))
+        );
+        assert!(error.message.ends_with(requirement), "{}", error.message);
+    }
+    let ambiguous = "fn main() { let mut x = 1; ByRef.Api.Pick(&mut x); }";
+    let diagnostics = oxel::check_with_references(ambiguous, &symbols).unwrap_err();
+    assert_eq!(diagnostics[0].code, "E0213");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("matches the argument modifiers")
     );
     let output = cli(
         "run",

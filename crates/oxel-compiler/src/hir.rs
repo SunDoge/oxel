@@ -5185,7 +5185,8 @@ impl<'a, 'src> Checker<'a, 'src> {
         }
         let mut eligible = Vec::new();
         let mut unsupported_signature = None;
-        let mut mismatched_modes = false;
+        let mut modifier_mismatch = None;
+        let mut conflicting_modifiers = false;
         for &member in candidates {
             let (signature, forms) = match usage {
                 OverloadUse::Method(_) => {
@@ -5202,12 +5203,12 @@ impl<'a, 'src> Checker<'a, 'src> {
                     if forms.iter().all(Option::is_none) {
                         continue;
                     }
-                    if args
-                        .iter()
-                        .enumerate()
-                        .any(|(index, arg)| arg.argument_mode() != method.parameter_mode(index))
-                    {
-                        mismatched_modes = true;
+                    if let Some(mismatch) = args.iter().enumerate().find_map(|(index, arg)| {
+                        let expected = method.parameter_mode(index);
+                        (arg.argument_mode() != expected).then_some((index, expected))
+                    }) {
+                        conflicting_modifiers |=
+                            *modifier_mismatch.get_or_insert(mismatch) != mismatch;
                         continue;
                     }
                     let Some(signature) = nullability::supported_clr_signature(
@@ -5284,7 +5285,19 @@ impl<'a, 'src> Checker<'a, 'src> {
             if let Some(error) = unsupported_signature {
                 return Err(error);
             }
-            if mismatched_modes {
+            if let Some((index, mode)) = modifier_mismatch {
+                if !conflicting_modifiers {
+                    let expected = if mode == ArgumentMode::Value {
+                        "a by-value argument".into()
+                    } else {
+                        format!("an argument marked '{}'", mode.call_prefix().trim_end())
+                    };
+                    return Err(Diagnostic::new(
+                        "E0213",
+                        args[index].span,
+                        format!("parameter {} of '{name}' expects {expected}", index + 1),
+                    ));
+                }
                 return Err(Diagnostic::new(
                     "E0213",
                     span,
