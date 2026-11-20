@@ -1107,6 +1107,57 @@ fn manifest_loads_sources_and_clr_references_for_lsp() {
 }
 
 #[test]
+fn lsp_test_mode_resolves_manifest_test_sources_against_the_library() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let library = project.join("math.oxel");
+    let tests = project.join("math_tests.oxel");
+    let text = "#[test] fn checks_sum() { assert(add(10, 20) == 30); }";
+    std::fs::write(&library, "internal fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+    std::fs::write(&tests, text).unwrap();
+    std::fs::write(
+        project.join("oxel.toml"),
+        "[package]\nname = 'Samples.Math'\nkind = 'library'\nsources = ['math.oxel']\ntest_sources = ['math_tests.oxel']",
+    )
+    .unwrap();
+    let tests_uri = url::Url::from_file_path(&tests).unwrap();
+    let library_uri = url::Url::from_file_path(&library).unwrap();
+
+    for include_tests in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxel"));
+        command
+            .current_dir(project)
+            .args(["lsp", "--manifest-path", "oxel.toml"]);
+        if include_tests {
+            command.arg("--tests");
+        }
+        let mut client = Client::launch(command, true, false);
+        client.open(tests_uri.as_str(), text);
+        let diagnostics = client.diagnostics();
+        if include_tests {
+            assert_eq!(diagnostics["diagnostics"], json!([]));
+            let definition = client.request(
+                "textDocument/definition",
+                json!({
+                    "textDocument": {"uri": tests_uri.as_str()},
+                    "position": {"line": 0, "character": text.find("add").unwrap()},
+                }),
+            );
+            assert_eq!(definition["uri"], library_uri.as_str());
+            client.change(
+                tests_uri.as_str(),
+                2,
+                json!([{"text": text.replace("20", "true")}]),
+            );
+            assert_eq!(client.diagnostics()["diagnostics"][0]["code"], "E0301");
+        } else {
+            assert_eq!(diagnostics["diagnostics"][0]["code"], "E0203");
+        }
+        client.finish();
+    }
+}
+
+#[test]
 fn rename_preserves_shadowing_and_rejects_changed_bindings() {
     let mut client = Client::start(true, None);
     let uri = "file:///virtual/rename.oxel";

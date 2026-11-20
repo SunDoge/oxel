@@ -101,6 +101,9 @@ struct EditorInputs {
     /// Include a source file in the editor's module.
     #[usage(long)]
     source: Vec<PathBuf>,
+    /// Include the manifest's test source files in the editor module.
+    #[usage(long)]
+    tests: bool,
 }
 
 pub(super) enum Action {
@@ -110,7 +113,7 @@ pub(super) enum Action {
     Test(Option<String>),
     Publish,
     Restore,
-    Lsp,
+    Lsp { tests: bool },
 }
 
 pub(super) struct Options {
@@ -174,7 +177,9 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
             (Action::Restore, BuildInputs::default())
         }
         Command::Lsp(editor) => (
-            Action::Lsp,
+            Action::Lsp {
+                tests: editor.tests,
+            },
             BuildInputs {
                 sources: editor.source,
                 reference: editor.reference,

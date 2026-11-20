@@ -61,7 +61,7 @@ fn cli(run: &mut Run) -> ExitCode {
         Err(exit) => return exit,
     };
     run.arguments = arguments;
-    let lsp = matches!(action, Action::Lsp);
+    let lsp = matches!(action, Action::Lsp { .. });
     let restore_only = matches!(action, Action::Restore);
     if manifest_path.is_some() && !sources.is_empty() {
         return usage_error(format, "choose a manifest or explicit source files");
@@ -91,7 +91,10 @@ fn cli(run: &mut Run) -> ExitCode {
         framework |= manifest.framework;
         nuget = manifest.nuget;
         sources = manifest.sources;
-        if matches!(action, Action::Test(_) | Action::Check { tests: true }) {
+        if matches!(
+            action,
+            Action::Test(_) | Action::Check { tests: true } | Action::Lsp { tests: true }
+        ) {
             sources.extend(manifest.test_sources);
         }
         references.splice(..0, manifest.references);
@@ -142,7 +145,7 @@ fn cli(run: &mut Run) -> ExitCode {
         };
         let resolution = if framework
             && nuget.is_empty()
-            && matches!(action, Action::Check { .. } | Action::Lsp)
+            && matches!(action, Action::Check { .. } | Action::Lsp { .. })
         {
             sdk::probe_framework(path, name)
                 .ok()
