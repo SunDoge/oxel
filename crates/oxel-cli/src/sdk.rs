@@ -40,7 +40,7 @@ pub(super) enum Error {
     },
     #[snafu(display("SDK did not report a portable host runtime identifier"))]
     InvalidRid,
-    #[snafu(display("oxel requires a .NET SDK 8 or newer for SDK projects"))]
+    #[snafu(display("oxel requires a .NET SDK 10 or newer for SDK projects"))]
     UnsupportedVersion,
     #[snafu(display("SDK did not resolve Microsoft.NETCore.App reference assemblies"))]
     NoFrameworkReferences,
@@ -443,7 +443,7 @@ fn sdk_version(version: &str) -> SdkResult<(String, String)> {
     let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
     match (major, minor) {
         (Some(major), Some(minor))
-            if major >= 8
+            if major >= 10
                 && parts.next().is_some()
                 && version.bytes().all(|byte| {
                     byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')
@@ -535,4 +535,25 @@ fn msbuild_text(value: &str) -> String {
         }
     }
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requires_dotnet_sdk_10_or_newer() {
+        for version in ["8.0.428", "9.0.100"] {
+            assert!(matches!(
+                sdk_version(version),
+                Err(Error::UnsupportedVersion)
+            ));
+        }
+        for (version, framework) in [("10.0.100", "net10.0"), ("11.0.100", "net11.0")] {
+            assert_eq!(
+                sdk_version(version).unwrap(),
+                (version.into(), framework.into())
+            );
+        }
+    }
 }

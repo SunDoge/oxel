@@ -467,11 +467,17 @@ fn hello_smoke_test() {
         fs::read(&assembly).unwrap(),
         oxel::compile(HELLO, "hello").unwrap(),
     );
-    assert!(assembly.with_extension("runtimeconfig.json").is_file());
+    let config: serde_json::Value =
+        serde_json::from_slice(&fs::read(assembly.with_extension("runtimeconfig.json")).unwrap())
+            .unwrap();
+    let options = &config["runtimeOptions"];
+    assert_eq!(options["tfm"], "net10.0");
+    assert_eq!(options["framework"]["version"], "10.0.0");
+    assert_eq!(options["rollForward"], "Major");
     let launched = Command::new("dotnet")
         .arg(assembly)
         .output()
-        .expect("install .NET 8 or newer");
+        .expect("install .NET 10 or newer");
     assert_eq!(stdout(launched).trim(), "30");
 }
 

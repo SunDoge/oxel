@@ -22,9 +22,9 @@ use oxel::{AssemblyKind, References, TestOptions};
 
 const RUNTIME_CONFIG: &str = r#"{
   "runtimeOptions": {
-    "tfm": "net8.0",
+    "tfm": "net10.0",
     "rollForward": "Major",
-    "framework": { "name": "Microsoft.NETCore.App", "version": "8.0.0" }
+    "framework": { "name": "Microsoft.NETCore.App", "version": "10.0.0" }
   }
 }
 "#;

@@ -331,7 +331,7 @@ fn build_counter_bridge(cwd: &std::path::Path) -> u32 {
     fs::write(
         cwd.join("Bridge.csproj"),
         include_str!("../../../examples/interop/Bridge.csproj")
-            .replace("net8.0", &format!("net{major}.0")),
+            .replace("net10.0", &format!("net{major}.0")),
     )
     .unwrap();
     fs::write(

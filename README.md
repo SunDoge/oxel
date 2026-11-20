@@ -4,7 +4,7 @@ oxel is a Rust compiler for a small, statically typed CLR-native language. It co
 
 ## Quick start
 
-Use Rust 1.91 or later. Running programs and the CLI benchmark requires `dotnet` on `PATH` with a .NET 8 or newer runtime. The integration suite uses a .NET SDK 8 or newer to build the C# reference fixture.
+Use Rust 1.91 or later. Running programs and the CLI benchmark requires `dotnet` on `PATH` with a .NET 10 or newer runtime. Framework and NuGet projects, Native AOT publishing, and the integration suite require a .NET 10 or newer SDK.
 
 ```sh
 cargo build --locked
@@ -26,7 +26,7 @@ Use `fn main(args: string[]) -> i32` to receive command-line arguments and retur
 oxel run examples/arguments.oxel -- "two words" --flag
 ```
 
-With plain source files or local DLL references, the runtime configuration targets .NET 8 and allows roll-forward to the next installed major version. Framework references and NuGet dependencies use the selected SDK's target framework. Parsing, semantic analysis and assembly generation run in Rust. [Microsoft .NET version selection](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
+With plain source files or local DLL references, the runtime configuration targets .NET 10 and allows roll-forward to the next installed major version. Framework references and NuGet dependencies use the selected SDK's target framework. Parsing, semantic analysis and assembly generation run in Rust. [Microsoft .NET version selection](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
 
 ### HTTP server example
 
@@ -659,7 +659,7 @@ oxel publish examples/hello.oxel
 ./target/oxel/native/hello
 ```
 
-`publish` builds for the SDK's host runtime and prints the executable path under `target/oxel/native/`. On Windows the executable ends in `.exe`. Publishing requires a .NET SDK 8 or newer and the SDK's platform-specific Native AOT dependencies, such as a linker and development libraries on Linux. The executable can run without an installed .NET runtime on a compatible system. [Microsoft Native AOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
+`publish` builds for the SDK's host runtime and prints the executable path under `target/oxel/native/`. On Windows the executable ends in `.exe`. Publishing requires a .NET 10 or newer SDK and the SDK's platform-specific Native AOT dependencies, such as a linker and development libraries on Linux. The executable can run without an installed .NET runtime on a compatible system. [Microsoft Native AOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
 
 When the SDK publishes companion runtime files, oxel places the executable and its companions in a content-addressed directory under `target/oxel/native/`. Keep that directory together when deploying the app.
 
