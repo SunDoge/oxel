@@ -21,6 +21,70 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn task_entry_point_awaits_completion_and_maps_the_result() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let main = project.join("main.oxel");
+    fs::write(&main, include_str!("../../../examples/async_main.oxel")).unwrap();
+    assert_eq!(
+        success(oxel(
+            project,
+            &["run", "--framework", "main.oxel", "--", "ready"]
+        ))
+        .trim(),
+        "ready"
+    );
+    let failed = oxel(project, &["run", "--framework", "main.oxel"]);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&failed.stderr).trim(),
+        "supply a command-line argument"
+    );
+
+    for (result, body, exit) in [
+        ("Task", "System.Threading.Tasks.Task.Delay(10)", 0),
+        (
+            "Task<i32>",
+            "System.Threading.Tasks.Task.FromResult(42)",
+            42,
+        ),
+    ] {
+        fs::write(
+            &main,
+            format!("fn main() -> System.Threading.Tasks.{result} {{ {body} }}"),
+        )
+        .unwrap();
+        let output = oxel(project, &["run", "--framework", "main.oxel"]);
+        assert_eq!(output.status.code(), Some(exit), "{output:?}");
+    }
+    fs::write(
+        &main,
+        "fn main() -> System.Threading.Tasks.Task<bool> { System.Threading.Tasks.Task.FromResult(true) }",
+    )
+    .unwrap();
+    let invalid = oxel(project, &["check", "--framework", "main.oxel"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("E0206"));
+
+    fs::write(
+        &main,
+        r#"fn main() -> System.Threading.Tasks.Task {
+            System.Threading.Tasks.Task.FromException(new System.InvalidOperationException("task failed"))
+        }"#,
+    )
+    .unwrap();
+    let failed = oxel(project, &["run", "--framework", "main.oxel"]);
+    assert!(!failed.status.success());
+    let error = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        error.contains("System.InvalidOperationException: task failed"),
+        "{error}"
+    );
+    assert!(!error.contains("AggregateException"), "{error}");
+}
+
+#[test]
 fn builtin_aliases_participate_in_clr_interface_conversions() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();

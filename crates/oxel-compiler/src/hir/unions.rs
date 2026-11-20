@@ -194,15 +194,15 @@ fn variant_tag(case: usize, span: Span) -> (usize, Expr) {
 #[derive(Clone, Copy)]
 pub(super) struct CarrierLayout {
     definition: usize,
-    success_case: usize,
-    success_field: usize,
-    failure_case: usize,
-    error_field: Option<usize>,
-    discriminant: Discriminant,
+    pub(super) success_case: usize,
+    pub(super) success_field: usize,
+    pub(super) failure_case: usize,
+    pub(super) error_field: Option<usize>,
+    pub(super) discriminant: Discriminant,
 }
 
 impl CarrierLayout {
-    fn for_type(types: &Structs<'_, '_>, ty: Type) -> Option<Self> {
+    pub(super) fn for_type(types: &Structs<'_, '_>, ty: Type) -> Option<Self> {
         Self::for_definition(types, types.definition_of(ty)?)
     }
 

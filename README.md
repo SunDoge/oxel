@@ -22,6 +22,10 @@ Both Hello World commands print `30`. [The integer example](examples/integers.ox
 
 Use `fn main(args: string[]) -> i32` to receive command-line arguments and return an exit code. The parameter and return type are independently optional. CLR supplies an empty array when the program receives no arguments. With `oxel run`, put compiler options and source paths before `--` and program arguments after it. [Argument example](examples/arguments.oxel) · [.NET entry points](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/main-and-command-args/)
 
+An entry point with no return type returns `void` and exits with status 0 on normal completion. An entry point returning the module's `Result<T, E>` can use `?`. `Ok(i32)` supplies the exit code and other successful payloads give status 0. `Err(error)` writes the error to standard error and gives status 1. [Result entry point example](examples/result_main.oxel)
+
+With `--framework`, an asynchronous entry point is a `fn main` that returns `System.Threading.Tasks.Task`, `Task<i32>`, or `Task<Result<T, E>>`. Use .NET task APIs in its body. The generated CLR entry point waits for the task and uses the same exit conventions for the completed value. A faulted task propagates its original exception. Run `oxel run --framework examples/async_main.oxel -- ready` to try the asynchronous example. [Asynchronous entry point example](examples/async_main.oxel)
+
 ```sh
 oxel run examples/arguments.oxel -- "two words" --flag
 ```

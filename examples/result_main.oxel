@@ -1,0 +1,15 @@
+enum Result<T, E> { Err(E), Ok(T) }
+
+fn exit_status(args: string[]) -> Result<i32, string> {
+    if args.Length == 0 {
+        Result.Err("supply a command-line argument")
+    } else {
+        Result.Ok(0)
+    }
+}
+
+fn main(args: string[]) -> Result<i32, string> {
+    let status = exit_status(args)?;
+    System.Console.WriteLine(args[0]);
+    Result.Ok(status)
+}

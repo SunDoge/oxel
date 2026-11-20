@@ -295,6 +295,7 @@ pub(super) struct Tables<'refs> {
     volatile_type: Option<u32>,
     create_instance: Option<u32>,
     string_from_object: Option<u32>,
+    error_writer_members: Option<(u32, u32)>,
     string_array_concat: Option<u32>,
     nullable_ctors: [Option<u32>; 2],
     first_fields: Vec<u32>,
@@ -446,6 +447,7 @@ impl<'refs> Tables<'refs> {
             volatile_type: None,
             create_instance: None,
             string_from_object: None,
+            error_writer_members: None,
             string_array_concat: None,
             nullable_ctors: [None; 2],
             first_fields: Vec::new(),
@@ -919,6 +921,28 @@ impl<'refs> Tables<'refs> {
 
     fn push_member(&mut self, owner: u32, name: &str, signature: u32) -> u32 {
         self.push_member_for(index(TableId::TypeRef, owner), name, signature)
+    }
+
+    pub(super) fn error_writer_members(&mut self) -> (u32, u32) {
+        if let Some(members) = self.error_writer_members {
+            return members;
+        }
+        self.type_refs.push(TypeRefRow {
+            resolution_scope: index(TableId::AssemblyRef, 1), // System.Runtime
+            type_name: self.strings.add("TextWriter"),
+            type_namespace: self.strings.add("System.IO"),
+        });
+        let writer = self.type_refs.len() as u32;
+        let mut signature = Writer::new();
+        signature.write_bytes(&[0x00, 0, 0x12]); // static TextWriter ()
+        signature.write_compressed_uint((writer << 2) | 1);
+        let signature = self.blobs.add(signature.as_slice());
+        let getter = MEMBER_REF | self.push_member(2, "get_Error", signature);
+        let signature = self.method_signature(&[Type::Object], Type::Void, Invocation::Instance, 0);
+        let write_line = MEMBER_REF | self.push_member(writer, "WriteLine", signature);
+        let members = (getter, write_line);
+        self.error_writer_members = Some(members);
+        members
     }
 
     fn push_member_for(&mut self, class: CodedIndex, name: &str, signature: u32) -> u32 {

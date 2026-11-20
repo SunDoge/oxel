@@ -1,0 +1,12 @@
+enum Result<T, E> { Ok(T), Err(E) }
+
+fn main(args: string[]) -> System.Threading.Tasks.Task<Result<i32, string>> {
+    System.Threading.Tasks.Task.Delay(25).ContinueWith::<Result<i32, string>>() |_| {
+        if args.Length == 0 {
+            Result.Err("supply a command-line argument")
+        } else {
+            System.Console.WriteLine(args[0]);
+            Result.Ok(0)
+        }
+    }
+}

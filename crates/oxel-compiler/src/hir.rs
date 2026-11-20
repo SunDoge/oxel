@@ -3,6 +3,7 @@ mod assignment;
 mod bounds;
 mod builtin_types;
 mod constants;
+mod entry;
 mod hierarchy;
 mod indexers;
 mod inference;
@@ -1212,6 +1213,8 @@ pub(crate) enum Value {
 pub(crate) enum Target {
     Function(usize, Box<[Type]>),
     WriteLine(Option<Type>),
+    ErrorWriter,
+    WriteErrorLine,
     AssertionException,
     DefaultConstructor(Type),
     External {
@@ -1443,7 +1446,10 @@ pub(crate) fn lower<'src>(
         functions.push(runner);
         Some(entry)
     } else {
-        scope.entry
+        scope
+            .entry
+            .as_ref()
+            .map(|entry| entry.install(&mut functions))
     };
     let mut structs = scope.types.definitions;
     if !scope.types.field_info_used.load(Ordering::Relaxed) {
@@ -1563,7 +1569,7 @@ struct ModuleScope<'ast, 'src, 'refs> {
     signatures: Vec<Signature>,
     constants: constants::Values<'src>,
     references: &'refs References,
-    entry: Option<usize>,
+    entry: Option<entry::Entry>,
 }
 
 #[derive(Clone, Copy)]
@@ -1638,16 +1644,23 @@ fn prepare<'ast, 'src, 'refs>(
                     [] => true,
                     [ty @ Type::Array(_)] => types.array_element(*ty) == Some(Type::String),
                     _ => false,
-                }
-                && matches!(signatures[index].result, Type::Void | Type::I32) =>
+                } =>
         {
-            Some(index)
+            Some(
+                entry::Entry::check(
+                    index,
+                    &signatures[index],
+                    &types,
+                    functions[index].name_span,
+                )
+                .map_err(|error| vec![error])?,
+            )
         }
         (_, Some(index)) => {
             return Err(vec![Diagnostic::new(
                 "E0206",
                 functions[index].name_span,
-                "main must have an Oxel body, be non-generic, take no parameters or one string[] parameter, and return void or i32",
+                "main must have an Oxel body, be non-generic, and take no parameters or one string[] parameter",
             )]);
         }
         (EntryPoint::Optional, None) => None,

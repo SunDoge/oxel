@@ -794,6 +794,12 @@ impl<'a, 'refs> Body<'a, 'refs> {
                         return;
                     }
                     Target::DefaultConstructor(ty) => self.metadata.default_constructor(*ty),
+                    Target::ErrorWriter => self.metadata.error_writer_members().0,
+                    Target::WriteErrorLine => {
+                        let token = self.metadata.error_writer_members().1;
+                        self.token_instruction(0x6f, token); // callvirt
+                        return;
+                    }
                     Target::AssertionException => {
                         self.token_instruction(0x73, ASSERTION_EXCEPTION_CTOR); // newobj
                         return;

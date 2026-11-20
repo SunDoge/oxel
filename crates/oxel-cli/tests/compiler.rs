@@ -482,6 +482,52 @@ fn hello_smoke_test() {
 }
 
 #[test]
+fn result_entry_point_reports_errors_and_preserves_exit_status() {
+    let folder = tempfile::tempdir().unwrap();
+    let directory = folder.path();
+    let path = directory.join("result_main.oxel");
+    fs::write(&path, include_str!("../../../examples/result_main.oxel")).unwrap();
+    let failed = cli(directory, "run", &path);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&failed.stderr).trim(),
+        "supply a command-line argument"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
+        .current_dir(directory)
+        .args(["run", "result_main.oxel", "--", "oxel"])
+        .output()
+        .unwrap();
+    assert_eq!(stdout(output).trim(), "oxel");
+
+    for (success, body, code, error) in [
+        ("i32", "Result.Ok(42)", 42, ""),
+        ("bool", "Result.Ok(true)", 0, ""),
+        ("bool", "Result.Err(30)", 1, "30"),
+    ] {
+        fs::write(
+            &path,
+            format!("enum Result<T, E> {{ Ok(T), Err(E) }} fn main() -> Result<{success}, i32> {{ {body} }}"),
+        )
+        .unwrap();
+        let compiled = stdout(cli(directory, "compile", &path));
+        let actual = Command::new("dotnet")
+            .current_dir(directory)
+            .arg(compiled.trim())
+            .output()
+            .unwrap();
+        assert_eq!(actual.status.code(), Some(code), "{actual:?}");
+        assert!(actual.stdout.is_empty(), "{actual:?}");
+        assert_eq!(String::from_utf8_lossy(&actual.stderr).trim(), error);
+    }
+    let malformed =
+        "enum Result<T, E> { Ok(T), Err(E, E) } fn main() -> Result<i32, string> { Result.Ok(0) }";
+    assert_eq!(oxel::check(malformed).unwrap_err()[0].code, "E0206");
+}
+
+#[test]
 fn executable_entry_points_receive_arguments_and_return_exit_codes() {
     let folder = tempfile::tempdir().unwrap();
     let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/arguments.oxel");
