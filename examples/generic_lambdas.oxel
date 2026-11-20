@@ -1,0 +1,28 @@
+fn remember<T>(initial: T) -> System.Func<T, T> {
+    let mut current = initial;
+    |next| {
+        let previous = current;
+        let replace: System.Action = || { current = next; };
+        replace();
+        previous
+    }
+}
+
+fn display<T: System.IFormattable>(value: T) -> System.Func<string> {
+    || { value.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture) }
+}
+
+fn print<T>(items: T[]) {
+    System.Array.ForEach(items) |item| {
+        System.Console.WriteLine(item);
+    };
+}
+
+fn main() {
+    let next = remember(10);
+    System.Console.WriteLine(next(30));
+    System.Console.WriteLine(next(40));
+    System.Console.WriteLine(remember("oxel")("CLR"));
+    System.Console.WriteLine(display(new System.DateTime(2024, 1, 2))());
+    print([10, 20]);
+}

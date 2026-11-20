@@ -1278,6 +1278,7 @@ pub(crate) enum ExprKind {
     Lambda {
         method: usize,
         definition: usize,
+        type_arguments: Box<[Type]>,
         environment: Box<Expr>,
     },
     CaptureCell(Value),

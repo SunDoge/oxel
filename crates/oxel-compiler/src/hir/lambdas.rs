@@ -132,11 +132,11 @@ impl<'src> Checker<'_, 'src> {
         expected: Option<Type>,
         span: Span,
     ) -> Checked<(ExprKind, Type)> {
-        if self.comptime || !self.type_parameters.is_empty() {
+        if self.comptime {
             return Err(Diagnostic::new(
                 "E0340",
                 span,
-                "lambdas require a non-generic runtime function",
+                "lambdas require a runtime function",
             ));
         }
         let expected = expected.ok_or_else(|| {
@@ -176,8 +176,8 @@ impl<'src> Checker<'_, 'src> {
             references: self.references,
             types: self.types,
             result: signature.result,
-            type_parameters: &[],
-            bounds: &[],
+            type_parameters: self.type_parameters,
+            bounds: self.bounds,
             scopes: vec![Scope::Empty],
             locals: Vec::new(),
             uninitialized: Vec::new(),
@@ -257,13 +257,20 @@ impl<'src> Checker<'_, 'src> {
             span,
         };
         let method = self.lambdas.len();
+        // The synthetic method has the same generic context as its enclosing
+        // method. Delegate creation binds it to the current CLR type arguments.
+        signature.type_arity = self.type_parameters.len() as u16;
+        signature.bounds = self.bounds.to_vec();
+        let type_arguments = (0..signature.type_arity)
+            .map(Type::MethodParameter)
+            .collect();
         self.lambdas.push(Function {
             has_exception_regions,
             internal: true,
             name: "<lambda>",
             span,
             signature,
-            type_parameters: Vec::new(),
+            type_parameters: self.type_parameters.iter().map(|&(name, _)| name).collect(),
             locals,
             captured_cells,
             body: super::MethodBody::Managed(body),
@@ -273,6 +280,7 @@ impl<'src> Checker<'_, 'src> {
             ExprKind::Lambda {
                 method,
                 definition,
+                type_arguments,
                 environment: Box::new(environment),
             },
             expected.non_nullable(),

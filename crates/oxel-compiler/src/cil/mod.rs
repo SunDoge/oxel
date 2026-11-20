@@ -602,11 +602,13 @@ impl<'a, 'refs> Body<'a, 'refs> {
             ExprKind::Lambda {
                 method,
                 definition,
+                type_arguments,
                 environment,
             } => {
                 self.expr(environment, base);
                 self.max_stack = self.max_stack.max(base + 2);
                 let method = METHOD_DEF | (self.lambda_base + method + 1) as u32;
+                let method = self.metadata.instantiate_method(method, type_arguments);
                 self.extended(0x06); // ldftn
                 self.code.extend_from_slice(&method.to_le_bytes());
                 let ctor = self.metadata.delegate_ctor(*definition, expr.ty);

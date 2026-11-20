@@ -564,7 +564,7 @@ button.OnClick() |sender, _| {
 };
 ```
 
-Here `OnClick` is a CLR method accepting an `EventHandler`. The lambda captures the immutable `button` binding, so the callback can still update the referenced object after the registration function returns. A nested lambda can capture parameters and bindings from any enclosing scope. Lambda bodies use a known delegate signature and are supported in non-generic functions. [Runnable threading example](examples/trailing_lambda.oxel) · [Nested lambda example](examples/nested_lambdas.oxel) · [CLR delegate binding](https://learn.microsoft.com/en-us/dotnet/api/system.delegate.createdelegate)
+Here `OnClick` is a CLR method accepting an `EventHandler`. The lambda captures the immutable `button` binding, so the callback can still update the referenced object after the registration function returns. A nested lambda can capture parameters and bindings from any enclosing scope. A lambda inside a generic function can use the enclosing type parameters and their CLR constraints. For example, `fn remember<T>(value: T) -> System.Func<T> { || { value } }` returns a delegate that captures `value`. [Runnable threading example](examples/trailing_lambda.oxel) · [Generic lambda example](examples/generic_lambdas.oxel) · [CLR delegate binding](https://learn.microsoft.com/en-us/dotnet/api/system.delegate.createdelegate)
 
 Capturing a `let mut` binding gives the declaring scope and all its callbacks shared storage for that variable. Initialize it before creating a callback that captures it. Each execution of the declaration creates its own storage, including declarations inside loops. Captured mutable locals also support CLR `ref` and `out` arguments. [Mutable captures example](examples/mutable_captures.oxel)
 

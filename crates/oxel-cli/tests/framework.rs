@@ -21,6 +21,21 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn lambdas_preserve_generic_types_constraints_and_captures() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    fs::write(
+        project.join("main.oxel"),
+        include_str!("../../../examples/generic_lambdas.oxel"),
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "10\n30\noxel\n2024\n10\n20\n",
+    );
+}
+
+#[test]
 fn invokes_clr_delegates_through_bindings_and_expressions() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();
