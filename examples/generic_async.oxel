@@ -1,0 +1,31 @@
+use System::Threading::Tasks::{Task, TaskCompletionSource};
+
+struct Box<T> {
+    tag: i32,
+    value: T,
+}
+
+async fn after<T>(gate: Task, value: T) -> T {
+    gate.await;
+    value
+}
+
+async fn boxed<T: struct>(task: Task<T>) -> Box<T> {
+    Box::<T> { tag: 1, value: task.await }
+}
+
+async fn main() {
+    let gate = new TaskCompletionSource();
+    let message = after(gate.Task, "oxel");
+    assert(!message.IsCompleted);
+    gate.SetResult();
+    System.Console.WriteLine(message.await);
+
+    let source = new TaskCompletionSource<i32>();
+    let value = boxed::<i32>(source.Task);
+    assert(!value.IsCompleted);
+    source.SetResult(30);
+    let completed = value.await;
+    assert(completed.tag == 1);
+    System.Console.WriteLine(completed.value);
+}

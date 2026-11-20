@@ -44,6 +44,7 @@ fn verifies_managed_assemblies_with_ilverify() {
         ("async_main.oxel", true),
         ("await.oxel", true),
         ("async_catch.oxel", true),
+        ("generic_async.oxel", true),
         ("generic_structs.oxel", false),
         ("option_try.oxel", false),
         ("optional_casts.oxel", false),

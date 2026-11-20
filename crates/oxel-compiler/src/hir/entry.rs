@@ -11,7 +11,7 @@ pub(super) struct Entry {
     result: Option<ResultExit>,
 }
 
-struct Task {
+pub(super) struct Task {
     as_task: Option<AwaitCall>,
     get_awaiter: AwaitCall,
     get_result: AwaitCall,
@@ -115,7 +115,7 @@ impl Entry {
 }
 
 impl Task {
-    fn resolve(types: &Structs<'_, '_>, ty: Type, span: Span) -> Checked<Option<Self>> {
+    pub(super) fn resolve(types: &Structs<'_, '_>, ty: Type, span: Span) -> Checked<Option<Self>> {
         if ty.is_nullable()
             || !types
                 .ancestor_id(ty)
@@ -144,7 +144,7 @@ impl Task {
         }))
     }
 
-    fn await_result(&self, mut value: Expr, locals: &mut Vec<Type>) -> Expr {
+    pub(super) fn await_result(&self, mut value: Expr, locals: &mut Vec<Type>) -> Expr {
         if let Some(as_task) = &self.as_task {
             value = as_task.lower(value, locals);
         }

@@ -1839,8 +1839,8 @@ impl<'src> Parser<'src> {
                 "'#[ignore]' requires '#[test]'",
             ));
         }
-        if self.peek() != Fn {
-            return Err(self.expected("'fn' after '#[test]'"));
+        if !matches!(self.peek(), Fn | Async) {
+            return Err(self.expected("'fn' or 'async fn' after '#[test]'"));
         }
         let mut function = self.function(None)?;
         function.test = Some(if ignore.is_some() {

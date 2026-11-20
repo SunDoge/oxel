@@ -635,10 +635,27 @@ impl<'a, 'refs> Body<'a, 'refs> {
                 let token = self.metadata.struct_token(*ty);
                 self.code.extend_from_slice(&token.to_le_bytes());
                 for (field, value) in fields {
-                    self.indexed(0x12, 0x0d, *local); // ldloca
-                    self.pending_expr(value, base, [StackSlot::Address(*ty)]);
-                    if value.ty == Type::Never {
-                        return;
+                    if self.async_state.is_some() {
+                        // A field initializer can suspend. Take the address
+                        // only after the field value is available.
+                        self.expr(value, base);
+                        if value.ty == Type::Never {
+                            return;
+                        }
+                        let saved = self.spill(StackSlot::Value(value.ty));
+                        self.max_stack = self.max_stack.max(base + 2);
+                        self.indexed(0x12, 0x0d, *local); // ldloca
+                        if let Some(saved) = saved {
+                            self.indexed(0x11, 0x0c, saved); // ldloc
+                        } else {
+                            self.op(0x14); // ldnull
+                        }
+                    } else {
+                        self.indexed(0x12, 0x0d, *local); // ldloca
+                        self.pending_expr(value, base, [StackSlot::Address(*ty)]);
+                        if value.ty == Type::Never {
+                            return;
+                        }
                     }
                     self.field(0x7d, *ty, *field); // stfld
                 }

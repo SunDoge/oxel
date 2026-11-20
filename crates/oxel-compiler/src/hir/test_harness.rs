@@ -2,14 +2,16 @@
 
 use super::{
     Binary, Block, Catch, Checked, Checker, ExceptionRegion, Expr, ExprKind, Function, MethodBody,
-    Signature, Statement, Target, Type, Value,
+    Signature, Statement, Structs, Target, Type, Value, entry::Task,
 };
 use crate::{Diagnostic, Span, TestOptions, syntax};
 
 pub(super) fn runner<'src>(
-    functions: &[&syntax::Function<'src>],
+    declarations: &[&syntax::Function<'src>],
+    functions: &[Function<'src>],
+    types: &Structs<'_, '_>,
     options: TestOptions<'_>,
-) -> Function<'src> {
+) -> Checked<Function<'src>> {
     let span = Span::default();
     let expr = |kind, ty| Expr { kind, ty, span };
     let integer = |number| expr(ExprKind::Integer(number), Type::I32);
@@ -23,6 +25,8 @@ pub(super) fn runner<'src>(
     };
     let failures = 0;
     let exception = 1;
+    let mut locals = vec![Type::I32, Type::Object];
+    let first_temporary = locals.len();
     let save_failures = |value| Statement::Store {
         target: Value::Local(failures),
         value,
@@ -31,7 +35,7 @@ pub(super) fn runner<'src>(
     let mut statements = vec![save_failures(integer(0))];
     let mut count = 0;
     let mut ignored = 0;
-    for (index, test) in functions.iter().enumerate() {
+    for (index, (test, function)) in declarations.iter().zip(functions).enumerate() {
         let Some(attribute) = test.matching_test(options.filter) else {
             continue;
         };
@@ -41,10 +45,17 @@ pub(super) fn runner<'src>(
             continue;
         }
         count += 1;
-        let call = expr(
+        let mut call = expr(
             ExprKind::Call(Target::Function(index, Box::new([])), Vec::new()),
-            Type::Void,
+            function.signature.result,
         );
+        if test.async_fn {
+            let task =
+                Task::resolve(types, call.ty, test.name_span)?.expect("an async test returns Task");
+            // Test calls run sequentially, so their awaiter can share a local.
+            locals.truncate(first_temporary);
+            call = task.await_result(call, &mut locals);
+        }
         let increment = expr(
             ExprKind::Binary(
                 Binary::Add,
@@ -110,7 +121,7 @@ pub(super) fn runner<'src>(
         },
         Type::Void,
     )));
-    Function {
+    Ok(Function {
         namespace: None,
         has_exception_regions: count != 0,
         internal: true,
@@ -123,7 +134,7 @@ pub(super) fn runner<'src>(
             result: Type::I32,
         },
         type_parameters: Vec::new(),
-        locals: vec![Type::I32, Type::Object],
+        locals,
         captured_cells: Default::default(),
         body: MethodBody::Managed(Block {
             statements,
@@ -131,7 +142,7 @@ pub(super) fn runner<'src>(
             ty: Type::I32,
         }),
         lambdas: Vec::new(),
-    }
+    })
 }
 
 fn void_block(statements: Vec<Statement>) -> Block {

@@ -1478,7 +1478,9 @@ pub(crate) fn lower<'src>(
     let mut functions = Vec::with_capacity(scope.runtime_functions().len());
     scope.check_runtime(std::convert::identity, |function| functions.push(function))?;
     let entry = if let Some(options) = tests {
-        let runner = test_harness::runner(scope.runtime_functions(), options);
+        let runner =
+            test_harness::runner(scope.runtime_functions(), &functions, &scope.types, options)
+                .map_err(|error| vec![error])?;
         let entry = functions.len();
         functions.push(runner);
         Some(entry)
@@ -1660,7 +1662,11 @@ fn prepare<'ast, 'src, 'refs>(
                     && (function.name == "main"
                         || signature.type_arity != 0
                         || !signature.parameters.is_empty()
-                        || signature.result != Type::Void)
+                        || if function.async_fn {
+                            asynchronous::output(&types, signature.result) != Type::Void
+                        } else {
+                            signature.result != Type::Void
+                        })
                 {
                     errors.push(Diagnostic::new(
                         "E0346",
@@ -2079,12 +2085,6 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
     let type_parameters = &function.type_parameters;
     let type_arity = validate_type_parameters(type_parameters, function.name_span)?;
     let native = function.body.managed().is_none();
-    if function.async_fn && (type_arity != 0 || function.test.is_some()) {
-        return Err(asynchronous::error(
-            function.name_span,
-            "async functions currently require a non-generic declaration without #[test]",
-        ));
-    }
     if native && type_arity != 0 {
         return Err(Diagnostic::new(
             "E0343",

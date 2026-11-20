@@ -28,7 +28,9 @@ With `--framework`, an asynchronous entry point is a `fn main` that returns a CL
 
 With `--framework`, write `async fn fetch() -> string` for a function that returns a CLR `Task<string>`. An omitted result type produces a `Task`. Inside an async function, `.await` accepts a CLR `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` and yields its result. For example, `fetch().await.Trim()` waits for the string and calls `Trim` on it. An incomplete task suspends the caller and schedules a continuation through the CLR awaiter. Exceptions fault the returned task and cancellation sets its canceled state. The same exit rules apply to `async fn main`. [Runnable `.await` example](examples/await.oxel)
 
-Use `.await` inside `try` and `catch` blocks. An exception raised when an await resumes can reach a surrounding catch, and the catch can await another task before continuing. Generic named async functions, `#[test]` on async functions, `using`, and loops over disposable CLR enumerators inside async bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
+Generic async functions support type inference and constraints. For example, `async fn after<T>(gate: Task, value: T) -> T` returns a CLR `Task<T>`. A struct field initializer can await a task. [Runnable generic async example](examples/generic_async.oxel)
+
+Use `.await` inside `try` and `catch` blocks. An exception raised when an await resumes can reach a surrounding catch, and the catch can await another task before continuing. `using` and loops over disposable CLR enumerators inside async bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
 
 Write `async |value| { ... }` or `async { ... }` to create an async lambda with a known CLR delegate type. Both forms also work as trailing lambdas. A delegate returning `Task<T>` or `ValueTask<T>` expects a body that yields `T`. A delegate returning `Task`, `ValueTask`, or `void` expects a void body. For void delegates such as event handlers, .NET's async-void builder handles uncaught exceptions. [Runnable async catch and lambda example](examples/async_catch.oxel)
 
@@ -113,6 +115,8 @@ fn adds_positive_numbers() {
 ```
 
 Run `oxel test examples/unit_tests.oxel`, or run `oxel test` in a directory with `oxel.toml`. Tests share the module with production functions and can call internal helpers. The runner executes tests in source order on CoreCLR, reports exceptions per test, and exits with status 1 if any fail. A test run can use a library or a module without `main`. Normal builds omit test functions. [Runnable unit tests](examples/unit_tests.oxel)
+
+With `--framework`, use `#[test] async fn name() { ... }` for a test that awaits CLR tasks. The runner waits for the test to finish before reporting the result or starting the next test. A faulted or canceled task is reported as a test failure.
 
 Use `oxel test --filter adds examples/unit_tests.oxel` to run tests whose names contain `adds`. Matching is case-sensitive and the compiler checks the whole test module before running the selected tests.
 

@@ -21,6 +21,95 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn generic_async_functions_infer_and_restore_parameters_after_suspension() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    fs::write(
+        project.join("main.oxel"),
+        include_str!("../../../examples/generic_async.oxel"),
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "oxel\n30\n"
+    );
+}
+
+#[test]
+fn async_tests_wait_report_exceptions_and_keep_running_in_source_order() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let file = project.join("tests.oxel");
+    fs::write(
+        &file,
+        r#"
+        use System::Threading::Tasks::Task;
+
+        #[test]
+        async fn passes() {
+            Task.Delay(10).await;
+            System.Console.WriteLine("resumed");
+        }
+
+        #[test]
+        async fn fails_after_await() {
+            Task.Delay(10).await;
+            assert(false, "async failure");
+        }
+
+        #[test]
+        #[ignore]
+        async fn skipped() {
+            Task.Delay(1).await;
+        }
+
+        #[test]
+        fn continues() {}
+        "#,
+    )
+    .unwrap();
+    let result = oxel(project, &["test", "--framework", "tests.oxel"]);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        output.starts_with("resumed\nok passes\nFAIL fails_after_await\n"),
+        "{output}"
+    );
+    assert!(
+        output.contains("System.InvalidOperationException: async failure"),
+        "{output}"
+    );
+    assert!(
+        output.ends_with("ignored skipped\nok continues\n3 tests, 1 failed, 1 ignored\n"),
+        "{output}"
+    );
+
+    assert_eq!(
+        success(oxel(
+            project,
+            &[
+                "test",
+                "--framework",
+                "--include-ignored",
+                "--filter",
+                "skipped",
+                "tests.oxel"
+            ]
+        )),
+        "ok skipped\n1 test, 0 failed\n"
+    );
+    fs::write(&file, "#[test] async fn invalid() -> i32 { 42 }").unwrap();
+    let invalid = oxel(project, &["check", "--framework", "--tests", "tests.oxel"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("E0346"));
+}
+
+#[test]
 fn async_lambdas_work_in_generic_functions_and_trailing_calls() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();
