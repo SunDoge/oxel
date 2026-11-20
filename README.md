@@ -735,6 +735,8 @@ Commits follow Conventional Commits. Run `mise install` for the project tools an
 
 Release-plz runs in Git-only mode. It uses the last `v<version>` tag as the baseline for both Cargo packages and includes compiler changes in the root `CHANGELOG.md`. Each release creates one Git tag and a matching forge release, such as `v0.1.0`. Run `release-plz update` on a clean branch to review version and changelog edits. With the forge and Git credentials configured, run `release-plz release --dry-run` to preview the release. Use `cargo package --workspace --locked` to verify the crate archives separately. [Release-plz Git-only configuration](https://release-plz.dev/docs/config#the-git_only-field)
 
+The GitHub [Release workflow](.github/workflows/release.yml) runs the workspace tests and checks the Linux x86-64 bundle. A manual run builds a downloadable workflow artifact by default. Enable `publish` on the default branch to create the Git-only draft through release-plz, attach the bundle and SHA-256 checksums, and publish the draft.
+
 ```sh
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings

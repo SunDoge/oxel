@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified bundle to GitHub Releases
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oxel-release
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Install the minimum Rust toolchain
+        run: rustup toolchain install 1.91.0 --profile minimal
+      - name: Test the workspace
+        run: cargo +1.91.0 test --workspace --locked
+      - name: Build and check the Linux bundle
+        id: package
+        shell: bash
+        run: |
+          cargo +1.91.0 build --release --locked -p oxel-cli
+          version=$(cargo +1.91.0 metadata --locked --no-deps --format-version 1 |
+            jq -er '.packages[] | select(.name == "oxel-cli") | .version')
+          bundle="oxel-$version-x86_64-unknown-linux-gnu"
+          stage=$(mktemp -d)
+          trap 'rm -rf "$stage"' EXIT
+          mkdir -p "$stage/$bundle" release
+          install -m 755 target/release/oxel "$stage/$bundle/oxel"
+          install -m 644 LICENSE README.md CHANGELOG.md "$stage/$bundle/"
+          tar -C "$stage" --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="$(git show -s --format=%cI HEAD)" -cf - "$bundle" |
+            gzip -n > "release/$bundle.tar.gz"
+          cd release
+          sha256sum "$bundle.tar.gz" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          mkdir "$stage/extracted"
+          tar -xzf "$bundle.tar.gz" -C "$stage/extracted"
+          cli="$stage/extracted/$bundle/oxel"
+          test "$("$cli" --version)" = "oxel $version"
+          test "$("$cli" run "$GITHUB_WORKSPACE/examples/hello.oxel")" = 30
+          printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: oxel-linux-x86_64
+          path: |
+            release/*.tar.gz
+            release/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    needs: bundle
+    if: inputs.publish && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: oxel-linux-x86_64
+          path: "${{ runner.temp }}/oxel-release"
+      - name: Check bundle integrity
+        working-directory: "${{ runner.temp }}/oxel-release"
+        run: sha256sum -c SHA256SUMS
+      - name: Create the release draft with release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          version: 0.4.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach the bundle and publish the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.bundle.outputs.tag }}
+          RELEASE_DIR: ${{ runner.temp }}/oxel-release
+        run: |
+          git fetch origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
+          release=$(gh release view "$RELEASE_TAG" --json isDraft,assets)
+          files=("$RELEASE_DIR/"*.tar.gz "$RELEASE_DIR/SHA256SUMS")
+          if jq -e '.isDraft' <<< "$release" > /dev/null; then
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --verify-tag --draft=false
+          else
+            for file in "${files[@]}"; do
+              jq -e --arg name "${file##*/}" 'any(.assets[]; .name == $name)' <<< "$release" > /dev/null
+            done
+          fi

@@ -16,3 +16,4 @@ changelog_update = true
 changelog_path = "CHANGELOG.md"
 changelog_include = ["oxel-compiler"]
 git_release_name = "v{{ version }}"
+git_release_draft = true
