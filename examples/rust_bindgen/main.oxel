@@ -1,0 +1,11 @@
+fn main() {
+    let shifted = translate(Point { x: 10, y: 20 }, 19, 22);
+    let mut value = shifted.x;
+    let previous: i32;
+    increment(&mut value, out previous);
+    System.Console.WriteLine(value);
+    System.Console.WriteLine(previous);
+    System.Console.WriteLine(shifted.y);
+    System.Console.WriteLine(text_bytes("你好"));
+    System.Console.WriteLine(text_bytes(null));
+}

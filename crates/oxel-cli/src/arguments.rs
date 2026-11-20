@@ -46,6 +46,8 @@ enum Command {
     Publish(BuildInputs),
     /// Restore SDK dependencies and write the NuGet lock file.
     Restore(RestoreInputs),
+    /// Generate Oxel native bindings from Rust C ABI exports.
+    Bindgen(BindgenInputs),
     /// Start the language server over stdio.
     Lsp(EditorInputs),
 }
@@ -100,6 +102,18 @@ struct RestoreInputs {
 }
 
 #[derive(Args)]
+pub(super) struct BindgenInputs {
+    /// Rust source file containing the C ABI exports.
+    pub source: PathBuf,
+    /// Library name as used by the CLR loader.
+    #[usage(long)]
+    pub library: String,
+    /// Write the generated Oxel source to this file instead of standard output.
+    #[usage(long, short = 'o')]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct EditorInputs {
     /// Include a local CLR assembly.
     #[usage(long)]
@@ -125,6 +139,7 @@ pub(super) enum Action {
     },
     Publish,
     Restore,
+    Bindgen(BindgenInputs),
     Lsp {
         tests: bool,
     },
@@ -196,6 +211,15 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
         Command::Restore(restore) => {
             native = restore.native;
             (Action::Restore, BuildInputs::default())
+        }
+        Command::Bindgen(inputs) => {
+            if parsed.framework || parsed.locked || parsed.manifest_path.is_some() {
+                return Err(usage_error(
+                    format,
+                    "bindgen reads a Rust source file and does not use project or SDK flags",
+                ));
+            }
+            (Action::Bindgen(inputs), BuildInputs::default())
         }
         Command::Lsp(editor) => (
             Action::Lsp {

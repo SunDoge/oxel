@@ -1,0 +1,4 @@
+[package]
+name = "rust-bindgen"
+sources = ["main.oxel", "target/math.ffi.oxel"]
+native_libraries = ["target/liboxel_rust_math.so"]

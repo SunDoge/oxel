@@ -699,6 +699,34 @@ The example's `[package]` sets `native_libraries = ["target/liboxel_math.so"]`. 
 
 Both executions print the same results for numeric values, structs, pointer updates and UTF‑8 string byte counts. The platform loader finds the packaged library beside the output. Keep the output directory together when deploying the program. `native_libraries` accepts prebuilt files for the target platform. [Default probing](https://learn.microsoft.com/en-us/dotnet/core/dependency-loading/default-probing) · [Native AOT library search](https://learn.microsoft.com/en-us/dotnet/core/compatibility/interop/10.0/native-library-search)
 
+### Generate bindings from Rust
+
+Run `oxel bindgen path/to/abi.rs --library my_library -o path/to/library.ffi.oxel` to generate Oxel source from a single Rust ABI file. The library name is the name that CoreCLR or Native AOT resolves when the generated code makes a call. Omit `-o` to write the bindings to standard output. Add the generated file to the application's `sources` and package the Rust `cdylib` with `native_libraries`.
+
+Use top-level `pub extern "C"` functions with `#[unsafe(no_mangle)]` or `#[unsafe(export_name = "...")]`. Fixed-width numbers and nonempty, nongeneric `#[repr(C)]` structs with named numeric or nested struct fields in the same file map to existing Oxel types. Use explicit Rust imports and keep the ABI type declarations in that file. Conditional ABI declarations, macro expansion, type aliases, function pointers, and buffer pointers with separate lengths require manual bindings or an ABI adapter. Packed or custom-aligned structs are rejected.
+
+Use Rust doc attributes on an exported function to describe how Oxel should pass a pointer or name the binding. These attributes compile with ordinary Rust. A doc comment such as `/// oxel: out result` has the same effect.
+
+| Rust attribute | Generated binding |
+| --- | --- |
+| `#[doc = "oxel: ref value"]` | `ref` for a `*mut T` that points to initialized storage |
+| `#[doc = "oxel: out result"]` | `out` for a `*mut T` that the Rust function initializes before returning |
+| `#[doc = "oxel: utf8 text"]` | `utf8 text: string` for a NUL-terminated read-only string |
+| `#[doc = "oxel: utf8_nullable text"]` | `utf8 text: string?`, where null becomes a null pointer |
+| `#[doc = "oxel: rename name"]` | Choose an Oxel function name while preserving the Rust symbol |
+| `#[doc = "oxel: skip"]` | Omit the export |
+
+For `utf8` and `utf8_nullable`, use `*const u8`, `*const core::ffi::c_char` or `*const std::ffi::c_char`. The Rust function must finish using any of these annotated pointers before it returns. Build and run the [Rust bindgen example](examples/rust_bindgen/abi.rs) from the repository root on Linux.
+
+```sh
+mkdir -p examples/rust_bindgen/target
+rustc --edition 2024 --crate-type cdylib examples/rust_bindgen/abi.rs \
+  -o examples/rust_bindgen/target/liboxel_rust_math.so
+oxel bindgen examples/rust_bindgen/abi.rs --library oxel_rust_math \
+  -o examples/rust_bindgen/target/math.ffi.oxel
+oxel run --manifest-path examples/rust_bindgen/oxel.toml
+```
+
 ## Native AOT publishing
 
 ```sh

@@ -6,6 +6,7 @@
 - Entry points can return `Result<T, E>` or a CLR `Task` or `ValueTask`. The launcher waits for asynchronous completion and maps the result to the process exit status.
 - Declare `async fn` to return a CLR task. Postfix `.await` suspends on incomplete `Task` and `ValueTask` values and supports chaining member calls on the awaited result.
 - Await tasks inside `try` and `catch` blocks. Use `async` lambdas with CLR delegates that return `Task`, `ValueTask`, or `void`.
+- Generate Oxel P/Invoke declarations from Rust C ABI exports with `oxel bindgen`, including C-layout structs and pointers annotated for `ref`, `out`, or UTF-8 strings.
 - Organize source files with explicit `namespace` declarations and import individual names or aliases with `use`. Library namespaces map to CLR namespaces.
 - The language includes CLR-compatible primitive types and generics, immutable bindings, value types with field updates and destructuring, discriminated unions, exhaustive matching, `Option` and `Result` propagation, typed CLR exception handlers, and `using` for scoped resources.
 - Use `as?` to check a CLR object's runtime type and get an `Option`. A null reference or mismatched type becomes `None`.

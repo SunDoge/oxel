@@ -1,5 +1,6 @@
 mod aot;
 mod arguments;
+mod bindgen;
 mod diagnostics;
 mod lsp;
 mod manifest;
@@ -61,6 +62,9 @@ fn cli(run: &mut Run) -> ExitCode {
         Err(exit) => return exit,
     };
     run.arguments = arguments;
+    if let Action::Bindgen(inputs) = action {
+        return bindgen::run(inputs, format);
+    }
     let lsp = matches!(action, Action::Lsp { .. });
     let restore_only = matches!(action, Action::Restore);
     if manifest_path.is_some() && !sources.is_empty() {
