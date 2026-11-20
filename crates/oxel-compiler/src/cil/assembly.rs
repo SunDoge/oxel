@@ -85,7 +85,12 @@ pub(super) fn write(
         lambda_bases.push(methods.len());
         methods.extend(&function.lambdas);
     }
-    let method_count = methods.len();
+    let source_method_count = methods.len();
+    let method_count = source_method_count
+        + methods
+            .iter()
+            .filter(|method| matches!(method.body, MethodBody::Async(..)))
+            .count();
     if method_count >= 0x00ff_ffff
         || program.structs.len() > 0x00ff_ffff - (FIRST_STRUCT_ROW as usize - 1)
         || field_count >= 0x00ff_ffff
@@ -118,6 +123,7 @@ pub(super) fn write(
         tests,
     );
     metadata.add_structs(&program.structs, namespace, method_count as u32 + 1);
+    let mut async_steps = Vec::new();
     for (method_index, (function, lambda_base)) in methods.into_iter().zip(lambda_bases).enumerate()
     {
         metadata.add_type_parameters(
@@ -139,6 +145,30 @@ pub(super) fn write(
                 body.emit(block);
                 body.write(&mut text, function.span)?;
                 (TEXT_RVA + CLI_HEADER_SIZE + offset, 0, 0, &[][..])
+            }
+            MethodBody::Async(block, plan) => {
+                let step = super::METHOD_DEF | (source_method_count + async_steps.len() + 1) as u32;
+                text.align(4);
+                let step_rva = TEXT_RVA + CLI_HEADER_SIZE + image_offset(text.len())?;
+                let mut body = Body::new(
+                    &mut metadata,
+                    lambda_base,
+                    &function.locals,
+                    &function.captured_cells,
+                    true,
+                );
+                let frame_size =
+                    body.emit_async_step(block, **plan, &function.signature.parameters)?;
+                body.write(&mut text, function.span)?;
+                async_steps.push(step_rva);
+
+                text.align(4);
+                let rva = TEXT_RVA + CLI_HEADER_SIZE + image_offset(text.len())?;
+                let empty = Default::default();
+                let mut body = Body::new(&mut metadata, 0, &[], &empty, false);
+                body.emit_async_start(frame_size, step, **plan, &function.signature.parameters);
+                body.write(&mut text, function.span)?;
+                (rva, 0, 0, &[][..])
             }
             MethodBody::Native { import, parameters } => {
                 metadata.add_native_import(method_index as u32 + 1, import);
@@ -166,6 +196,26 @@ pub(super) fn write(
             rva,
             impl_flags,
             flags: flags | native_flags,
+            name,
+            signature,
+            param_list,
+        });
+    }
+    for (index, rva) in async_steps.into_iter().enumerate() {
+        let signature = Signature {
+            type_arity: 0,
+            bounds: Vec::new(),
+            parameters: vec![Type::NullableObject],
+            result: Type::Void,
+        };
+        let param_list = metadata.add_parameters(&signature, &[]);
+        let signature =
+            metadata.method_signature(&[Type::NullableObject], Type::Void, Invocation::Static, 0);
+        let name = metadata.strings.add(&format!("<async_step_{index}>"));
+        metadata.methods.push(MethodDefRow {
+            rva,
+            impl_flags: 0,
+            flags: 0x0091,
             name,
             signature,
             param_list,
@@ -833,6 +883,15 @@ impl<'refs> Tables<'refs> {
             .externals
             .imported_type(self.externals.method(id).owner);
         owner.value_struct || owner.builtin.is_some_and(Type::scalar)
+    }
+
+    pub(super) fn stack_only(&self, ty: Type) -> bool {
+        if let Type::ConstructedClrStruct(id) = ty
+            && let InstanceKind::External(definition) = self.instances[id].kind
+        {
+            return self.externals.imported_type(definition).stack_only;
+        }
+        false
     }
 
     pub(super) fn wide_integer(&self, ty: Type) -> bool {

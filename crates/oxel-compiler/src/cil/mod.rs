@@ -1,6 +1,7 @@
 //! Lowers typed HIR directly to ECMA-335 method bodies.
 
 mod assembly;
+mod asynchronous;
 
 use clrmeta::writer::Writer;
 use std::{borrow::Cow, collections::HashSet};
@@ -164,6 +165,7 @@ struct Body<'a, 'refs> {
     region_spills: Vec<Vec<Option<u16>>>,
     return_jumps: Vec<usize>,
     return_slot: Option<u16>,
+    async_state: Option<asynchronous::State>,
 }
 
 impl<'a, 'refs> Body<'a, 'refs> {
@@ -191,6 +193,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             region_spills: Vec::new(),
             return_jumps: Vec::new(),
             return_slot: None,
+            async_state: None,
         }
     }
 
@@ -503,6 +506,10 @@ impl<'a, 'refs> Body<'a, 'refs> {
     }
 
     fn return_value(&mut self, value: Option<&Expr>, base: usize) {
+        if self.async_state.is_some() {
+            self.async_return(value, base);
+            return;
+        }
         let protected = !self.region_spills.is_empty();
         let mut stored = None;
         if let Some(value) = value {
@@ -541,6 +548,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             self.max_stack = self.max_stack.max(base + 1);
         }
         match &expr.kind {
+            ExprKind::Await(suspension) => self.suspend(suspension, base),
             ExprKind::Integer(number) if self.metadata.wide_integer(expr.ty) => {
                 self.op(0x21); // ldc.i8
                 self.code.extend_from_slice(&number.to_le_bytes());
@@ -585,7 +593,13 @@ impl<'a, 'refs> Body<'a, 'refs> {
                 unreachable!("type queries are evaluated at compile time")
             }
             ExprKind::Interpolation(parts) => self.interpolation(parts, base),
-            ExprKind::Load(Value::Parameter(index)) => self.indexed(0x0e, 0x09, *index), // ldarg
+            ExprKind::Load(Value::Parameter(index)) => {
+                if let Some(state) = &self.async_state {
+                    self.indexed(0x11, 0x0c, state.parameter(*index)); // ldloc
+                } else {
+                    self.indexed(0x0e, 0x09, *index); // ldarg
+                }
+            }
             ExprKind::Load(value @ (Value::Local(_) | Value::CapturedCell(..))) => {
                 if let Some(element) = self.cell_element(*value) {
                     self.cell_index(*value, element, base);
@@ -1362,7 +1376,13 @@ impl<'a, 'refs> Body<'a, 'refs> {
         } else {
             match value {
                 Value::Local(index) => self.indexed(0x12, 0x0d, index), // ldloca
-                Value::Parameter(index) => self.indexed(0x0f, 0x0a, index), // ldarga
+                Value::Parameter(index) => {
+                    if let Some(state) = &self.async_state {
+                        self.indexed(0x12, 0x0d, state.parameter(index)); // ldloca
+                    } else {
+                        self.indexed(0x0f, 0x0a, index); // ldarga
+                    }
+                }
                 _ => unreachable!("addressable binding"),
             }
         }

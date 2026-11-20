@@ -26,6 +26,10 @@ An entry point with no return type returns `void` and exits with status 0 on nor
 
 With `--framework`, an asynchronous entry point is a `fn main` that returns a CLR `System.Threading.Tasks.Task` or `ValueTask`. Both support the non-generic form and generic results of `i32` or `Result<T, E>`. Use .NET task APIs in its body. The generated CLR entry point waits for the task and uses the same exit conventions for the completed value. A faulted task propagates its original exception. Run `oxel run --framework examples/async_main.oxel -- ready` to try the asynchronous example. [Asynchronous entry point example](examples/async_main.oxel)
 
+With `--framework`, write `async fn fetch() -> string` for a function that returns a CLR `Task<string>`. An omitted result type produces a `Task`. Inside an async function, `.await` accepts a CLR `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` and yields its result. For example, `fetch().await.Trim()` waits for the string and calls `Trim` on it. An incomplete task suspends the caller and schedules a continuation through the CLR awaiter. Exceptions fault the returned task and cancellation sets its canceled state. The same exit rules apply to `async fn main`. [Runnable `.await` example](examples/await.oxel)
+
+The initial async implementation supports non-generic functions, including explicit `return`, tail expressions and loops. Generic async functions, async lambdas, `#[test]` on async functions, `catch`, and `using` inside async function bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
+
 ```sh
 oxel run examples/arguments.oxel -- "two words" --flag
 ```

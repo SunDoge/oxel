@@ -1715,19 +1715,20 @@ fn value_task_entry_waits_for_a_pending_clr_source() {
         "#,
         None,
     );
-    fs::write(
-        project.join("main.oxel"),
+    for code in [
         "fn main() -> System.Threading.Tasks.ValueTask<i32> { TaskBridge.Start() }",
-    )
-    .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
-        .current_dir(project)
-        .args(["run", "--framework", "main.oxel", "--reference"])
-        .arg(reference)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(42), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
+        "async fn main() -> i32 { TaskBridge.Start().await }",
+    ] {
+        fs::write(project.join("main.oxel"), code).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
+            .current_dir(project)
+            .args(["run", "--framework", "main.oxel", "--reference"])
+            .arg(&reference)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(42), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
 }
 
 fn build_reference_fixture(

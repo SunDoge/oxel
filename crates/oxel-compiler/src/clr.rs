@@ -1189,6 +1189,10 @@ impl References {
             )
     }
 
+    pub(crate) fn is_framework_type(&self, id: usize) -> bool {
+        self.assembly(self.imported_type(id).assembly).framework
+    }
+
     pub(crate) fn is_value_base(&self, id: usize) -> bool {
         let ty = self.imported_type(id);
         let assembly = self.assembly(ty.assembly);

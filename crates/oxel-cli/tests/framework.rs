@@ -21,6 +21,108 @@ const EXAMPLE: &str = include_str!("../../../examples/file_lines.oxel");
 const ENUM_EXAMPLE: &str = include_str!("../../../examples/enum_interop.oxel");
 
 #[test]
+fn postfix_await_suspends_and_resumes_without_blocking_the_caller() {
+    use std::{
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let main = project.join("main.oxel");
+    fs::write(&main, include_str!("../../../examples/await.oxel")).unwrap();
+    let dll = success(oxel(project, &["compile", "--framework", "main.oxel"]));
+    let mut process = Command::new("dotnet")
+        .arg(dll.trim())
+        .current_dir(project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            process.kill().unwrap();
+            let _ = process.wait();
+            panic!("the async example did not finish after completing the task");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(success(process.wait_with_output().unwrap()).trim(), "30");
+
+    fs::write(&main, r#"
+        async fn read(source: System.Threading.Tasks.Task<i32>) -> i32 {
+            let value = source.await;
+            let mut iterations = 0;
+            while iterations < 2 {
+                System.Threading.Tasks.Task.Delay(5).await;
+                iterations += 1;
+            }
+            return value + iterations;
+        }
+
+        fn check_failures() {
+            let source = new System.Threading.Tasks.TaskCompletionSource<i32>();
+            let failed: System.Threading.Tasks.Task = read(source.Task);
+            source.SetException(new System.InvalidOperationException("preserved"));
+            try { failed.GetAwaiter().GetResult(); }
+            catch (error: System.InvalidOperationException) { System.Console.WriteLine(error.Message); };
+
+            let source = new System.Threading.Tasks.TaskCompletionSource<i32>();
+            let canceled: System.Threading.Tasks.Task = read(source.Task);
+            source.SetCanceled();
+            try { canceled.GetAwaiter().GetResult(); }
+            catch (_: System.OperationCanceledException) { System.Console.WriteLine(canceled.IsCanceled); };
+        }
+
+        async fn change_context(slot: System.Threading.AsyncLocal<i32>, gate: System.Threading.Tasks.Task) -> i32 {
+            slot.Value = 17;
+            gate.await;
+            slot.Value
+        }
+
+        async fn main() {
+            check_failures();
+            System.Console.WriteLine(read(System.Threading.Tasks.Task.FromResult(28)).await);
+            let slot = new System.Threading.AsyncLocal<i32>();
+            slot.Value = 3;
+            let gate = new System.Threading.Tasks.TaskCompletionSource();
+            let pending = change_context(slot, gate.Task);
+            System.Console.WriteLine(slot.Value);
+            gate.SetResult();
+            System.Console.WriteLine(pending.await);
+        }
+    "#).unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"]))
+            .lines()
+            .collect::<Vec<_>>(),
+        ["preserved", "True", "30", "3", "17"]
+    );
+
+    for (source, message) in [
+        (
+            "fn main() { System.Threading.Tasks.Task.Delay(1).await; }",
+            "requires an async function",
+        ),
+        (
+            "async fn main() { 1.await; }",
+            "requires a non-null CLR Task or ValueTask",
+        ),
+    ] {
+        fs::write(&main, source).unwrap();
+        let result = oxel(project, &["check", "--framework", "main.oxel"]);
+        assert!(!result.status.success(), "{source}");
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            error.contains("E0351") && error.contains(message),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn slices_share_arrays_and_cross_clr_signatures_by_value() {
     let folder = tempfile::tempdir().unwrap();
     let project = folder.path();

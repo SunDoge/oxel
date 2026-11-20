@@ -392,6 +392,7 @@ impl Analysis<'_, '_> {
                     self.expressions(update.indices.iter().map(|(_, value)| value), state)?;
                 self.expression(&update.value, state)
             }
+            ExprKind::Await(suspension) => self.expression(&suspension.awaiter, state),
             ExprKind::ConstrainedCall { receiver, args, .. } => {
                 let state = self.expression(receiver, state)?;
                 self.call_arguments(args, state)

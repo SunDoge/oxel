@@ -1,5 +1,6 @@
 mod arrays;
 mod assignment;
+pub(crate) mod asynchronous;
 mod bounds;
 mod builtin_types;
 mod constants;
@@ -1150,6 +1151,7 @@ pub(crate) struct Function<'src> {
 
 pub(crate) enum MethodBody {
     Managed(Block),
+    Async(Block, Box<asynchronous::Plan>),
     Native {
         import: syntax::NativeImport,
         parameters: Vec<syntax::ParameterPassing>,
@@ -1269,6 +1271,7 @@ pub(crate) struct Catch {
 }
 
 pub(crate) enum ExprKind {
+    Await(Box<asynchronous::Suspension>),
     Integer(i64),
     Float32(f32),
     Float64(f64),
@@ -1843,6 +1846,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
         let signature = &self.signatures[index];
         let types = &self.types;
         let mut checker = Checker {
+            async_fn: function.async_fn,
             names: &self.names,
             comptime: function.comptime,
             in_test: function.test.is_some(),
@@ -1853,7 +1857,11 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             lookups,
             references: self.references,
             types,
-            result: signature.result,
+            result: if function.async_fn {
+                asynchronous::output(types, signature.result)
+            } else {
+                signature.result
+            },
             type_parameters: &function.type_parameters,
             bounds: &signature.bounds,
             scopes: vec![Scope::Empty],
@@ -1914,15 +1922,33 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             checker.record_annotation(&parameter.annotation, ty);
         }
         if let Some(result) = function.result.as_ref() {
-            checker.record_annotation(result, signature.result);
+            checker.record_annotation(result, checker.result);
         }
         let body = match &function.body {
             syntax::FunctionBody::Managed(source) => {
-                let body = checker.block(source, Some(signature.result))?;
+                let body = checker.block(source, Some(checker.result))?;
                 if !checker.uninitialized.is_empty() {
                     assignment::validate(&body, &checker.uninitialized)?;
                 }
-                MethodBody::Managed(body)
+                if function.async_fn {
+                    if checker.has_exception_regions {
+                        return Err(asynchronous::error(
+                            function.name_span,
+                            "async functions currently require a body without 'catch' or 'using'",
+                        ));
+                    }
+                    if checker.locals.iter().any(|&ty| types.stack_only(ty)) {
+                        return Err(asynchronous::error(
+                            function.name_span,
+                            "async functions cannot store stack-only spans",
+                        ));
+                    }
+                    let plan =
+                        asynchronous::Plan::resolve(types, checker.result, function.name_span)?;
+                    MethodBody::Async(body, Box::new(plan))
+                } else {
+                    MethodBody::Managed(body)
+                }
             }
             syntax::FunctionBody::Native(import) => MethodBody::Native {
                 import: import.clone(),
@@ -1963,6 +1989,12 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
     let type_parameters = &function.type_parameters;
     let type_arity = validate_type_parameters(type_parameters, function.name_span)?;
     let native = function.body.managed().is_none();
+    if function.async_fn && (type_arity != 0 || function.test.is_some()) {
+        return Err(asynchronous::error(
+            function.name_span,
+            "async functions currently require a non-generic declaration without #[test]",
+        ));
+    }
     if native && type_arity != 0 {
         return Err(Diagnostic::new(
             "E0343",
@@ -1995,6 +2027,12 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
             ));
         }
         let ty = types.scoped_type(annotation, type_parameters, Some(&bounds), false, false)?;
+        if function.async_fn && types.stack_only(ty) {
+            return Err(asynchronous::error(
+                annotation.span,
+                "an async parameter cannot be a stack-only span",
+            ));
+        }
         if native {
             match parameter.passing {
                 syntax::ParameterPassing::Utf8 => {
@@ -2058,7 +2096,11 @@ fn signature(function: &syntax::Function<'_>, types: &Structs<'_, '_>) -> Checke
         type_arity,
         bounds,
         parameters,
-        result,
+        result: if function.async_fn {
+            asynchronous::task_type(types, result, function.name_span)?
+        } else {
+            result
+        },
     })
 }
 
@@ -2220,10 +2262,19 @@ fn signature_detail(
         syntax::function_prefix(
             function.internal,
             function.comptime,
-            function.body.managed().is_none()
+            function.body.managed().is_none(),
+            function.async_fn,
         ),
         function.name,
-        describe_scoped(types, &function.type_parameters, signature.result)
+        describe_scoped(
+            types,
+            &function.type_parameters,
+            if function.async_fn {
+                asynchronous::output(types, signature.result)
+            } else {
+                signature.result
+            }
+        )
     )
 }
 
@@ -2420,6 +2471,7 @@ enum MemberAccess<'a, 'src> {
 }
 
 struct Checker<'a, 'src> {
+    async_fn: bool,
     in_test: bool,
     comptime: bool,
     names: &'a HashMap<&'src str, usize>,
@@ -4075,6 +4127,7 @@ impl<'a, 'src> Checker<'a, 'src> {
                     "'ref' and 'out' arguments require a CLR method or constructor",
                 ));
             }
+            Expression::Await(operand, span) => self.await_expression(operand, *span)?,
             Expression::Char(unit) => (ExprKind::Integer(i64::from(*unit)), Type::Char),
             Expression::Bool(value) => (ExprKind::Boolean(*value), Type::Bool),
             Expression::Null => (ExprKind::Null, Type::Null),

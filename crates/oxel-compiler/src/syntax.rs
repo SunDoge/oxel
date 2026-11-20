@@ -4,6 +4,8 @@ use crate::{ArgumentMode, CallableSignature, Diagnostic, DiagnosticFix, Span};
 enum Kind {
     Fn,
     Comptime,
+    Async,
+    Await,
     Extern,
     New,
     As,
@@ -667,6 +669,7 @@ pub(crate) enum PatternKind<'src> {
 }
 
 pub(crate) struct Function<'src> {
+    pub async_fn: bool,
     pub internal: bool,
     pub comptime: bool,
     pub test: Option<TestAttribute>,
@@ -750,6 +753,7 @@ pub(crate) struct NativeImport {
 }
 
 struct FunctionHeader<'src> {
+    async_fn: bool,
     native: bool,
     internal: bool,
     comptime: bool,
@@ -762,7 +766,19 @@ struct FunctionHeader<'src> {
     result: Option<Path<'src>>,
 }
 
-pub(crate) fn function_prefix(internal: bool, comptime: bool, native: bool) -> &'static str {
+pub(crate) fn function_prefix(
+    internal: bool,
+    comptime: bool,
+    native: bool,
+    async_fn: bool,
+) -> &'static str {
+    if async_fn {
+        return if internal {
+            "internal async fn"
+        } else {
+            "async fn"
+        };
+    }
     match (internal, comptime, native) {
         (true, _, true) => "internal extern \"C\" fn",
         (false, _, true) => "extern \"C\" fn",
@@ -896,6 +912,7 @@ pub(crate) struct CatchArm<'src> {
 }
 
 pub(crate) enum Expression<'src> {
+    Await(Box<Expr<'src>>, Span),
     Int {
         digits: &'src str,
         negative: bool,
@@ -1097,7 +1114,7 @@ pub fn declared_function_signature(
     })?;
     parser.pos = match &parser.tokens[..index] {
         [.., external, abi] if external.kind == Extern && abi.kind == StringLiteral => index - 2,
-        [.., modifier] if modifier.kind == Comptime => index - 1,
+        [.., modifier] if matches!(modifier.kind, Comptime | Async) => index - 1,
         _ => index,
     };
     if let Some(previous) = parser.pos.checked_sub(1)
@@ -1107,7 +1124,12 @@ pub fn declared_function_signature(
     }
     let internal = parser.take_internal();
     let header = parser.function_header(internal).ok()?;
-    let prefix = function_prefix(header.internal, header.comptime, header.native);
+    let prefix = function_prefix(
+        header.internal,
+        header.comptime,
+        header.native,
+        header.async_fn,
+    );
     let mut label = format!("{prefix} {name}");
     if !header.type_parameters.is_empty() {
         let parameters = header
@@ -1166,7 +1188,7 @@ fn parse_with_cursor(
         }
         let internal = parser.take_internal();
         let declaration = match parser.peek() {
-            Fn | Comptime | Extern => parser
+            Fn | Comptime | Async | Extern => parser
                 .function(internal)
                 .map(|function| file.functions.push(function)),
             Struct | Enum => parser
@@ -1280,7 +1302,7 @@ impl<'src> Parser<'src> {
     fn starts_declaration(&self) -> bool {
         matches!(
             self.peek(),
-            Fn | Comptime | Extern | Struct | Enum | Const | Hash
+            Fn | Comptime | Async | Extern | Struct | Enum | Const | Hash
         ) || self.is_internal(self.current())
     }
 
@@ -1355,7 +1377,13 @@ impl<'src> Parser<'src> {
     fn path(&mut self) -> Parsed<Path<'src>> {
         let (first, mut span) = self.name()?;
         let mut segments = vec![(first, span)];
-        while self.take(Dot).is_some() {
+        while self.peek() == Dot
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_none_or(|token| token.kind != Await)
+        {
+            self.bump();
             let (name, part) = self.name()?;
             segments.push((name, part));
             span.end = part.end;
@@ -1575,7 +1603,10 @@ impl<'src> Parser<'src> {
     }
 
     fn function_header(&mut self, internal: Option<Token>) -> Parsed<FunctionHeader<'src>> {
-        let modifier = self.take(Comptime).or_else(|| self.take(Extern));
+        let modifier = self
+            .take(Comptime)
+            .or_else(|| self.take(Extern))
+            .or_else(|| self.take(Async));
         let native = modifier.is_some_and(|token| token.kind == Extern);
         if native {
             let abi = self.current().span;
@@ -1611,6 +1642,7 @@ impl<'src> Parser<'src> {
         })?;
         let result = self.take(Arrow).map(|_| self.type_path(0)).transpose()?;
         Ok(FunctionHeader {
+            async_fn: modifier.is_some_and(|token| token.kind == Async),
             native,
             internal: internal.is_some(),
             comptime: modifier.is_some_and(|token| token.kind == Comptime),
@@ -1640,6 +1672,7 @@ impl<'src> Parser<'src> {
             FunctionBody::Managed(self.block(0)?)
         };
         Ok(Function {
+            async_fn: header.async_fn,
             internal: header.internal,
             comptime: header.comptime,
             test: None,
@@ -2094,6 +2127,20 @@ impl<'src> Parser<'src> {
             }
             if self.take(Dot).is_none() {
                 break;
+            }
+            if let Some(await_keyword) = self.take(Await) {
+                let tree_depth = left.depth + 1;
+                self.nesting(depth + tree_depth)?;
+                let span = Span {
+                    start: left.span.start,
+                    end: await_keyword.span.end,
+                };
+                left = Expr {
+                    kind: Expression::Await(Box::new(left), await_keyword.span),
+                    span,
+                    depth: tree_depth,
+                };
+                continue;
             }
             let (field, span) = self.name()?;
             let start = left.span.start;
@@ -2763,6 +2810,8 @@ fn identifier_kind(text: &str) -> Kind {
     match text {
         "fn" => Fn,
         "comptime" => Comptime,
+        "async" => Async,
+        "await" => Await,
         "extern" => Extern,
         "new" => New,
         "as" => As,

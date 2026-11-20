@@ -8,6 +8,7 @@ pub(super) fn signature(function: &Function<'_>) -> Hash {
     let mut hash = Hasher::new();
     hash.update(&[
         u8::from(function.comptime),
+        u8::from(function.async_fn),
         u8::from(function.internal),
         u8::from(function.body.managed().is_none()),
         u8::from(function.test.is_some()),

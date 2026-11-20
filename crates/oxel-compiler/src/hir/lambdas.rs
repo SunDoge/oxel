@@ -170,6 +170,7 @@ impl<'src> Checker<'_, 'src> {
         let capture = &mut self.capture;
         let mut outer = |name: &str, span| capture.as_mut()?.binding(name, span);
         let mut nested = Checker {
+            async_fn: false,
             in_test: self.in_test,
             comptime: false,
             names: self.names,

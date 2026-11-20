@@ -1,0 +1,17 @@
+fn add(left: i32, right: i32) -> i32 {
+    left + right
+}
+
+async fn measure(text: System.Threading.Tasks.Task<string>) -> i32 {
+    add(26, text.await.Trim().Length)
+}
+
+async fn main() {
+    let source = new System.Threading.Tasks.TaskCompletionSource<string>();
+    let pending = measure(source.Task);
+    assert(!pending.IsCompleted);
+    source.SetResult(" oxel ");
+    let result = pending.await;
+    let wrapped = new System.Threading.Tasks.ValueTask<i32>(result);
+    System.Console.WriteLine(wrapped.await);
+}
