@@ -2,6 +2,78 @@
 
 ## [Unreleased]
 
+## [0.1.0](https://github.com/SunDoge/oxel/releases/tag/v0.1.0) - 2026-11-21
+
+### Added
+
+- replace coalescing with explicit fallback calls
+- run ONNX Runtime inference from Oxel
+- add async disposal, source debugging, and a SQLite example
+- add the Oxel source formatter
+- support Oxel in Zed
+- add CLR-native source interfaces
+- add CoreCLR view hot reload
+- support ASP.NET Core framework references
+- support generic async functions and async tests
+- add Plico desktop counter experiment
+- bind Rust buffers and native callbacks
+- generate Oxel bindings from Rust C ABI exports
+- drive the Avalonia counter with an immediate view
+- support async catch blocks and lambdas
+- add source namespaces and explicit use imports
+- implement async functions and postfix await
+- support CLR Span and ReadOnlySpan views
+- show Rust-style CLR references in signature help
+- add Rust-style managed reference arguments
+- forward Oxel parameters to readonly CLR references
+- support readonly CLR references in virtual calls
+- support readonly CLR in arguments
+- support ValueTask entry points
+- support Result and Task entry points
+- list tests without starting CoreCLR
+- support lambdas in generic functions
+- require .NET 10 or newer
+- allow direct calls to CLR delegates
+- add optional runtime casts
+- support ignored unit tests
+- include dedicated test sources in language server sessions
+- check test modules without executing them
+- support dedicated test sources in manifests
+- filter unit tests by name
+- run Oxel unit tests on CoreCLR
+- support shorthand struct fields and bindings
+- bootstrap Oxel compiler and CLR toolchain
+
+### Fixed
+
+- point to mismatched CLR argument modifiers
+- honor CLR interfaces on builtin aliases
+- validate editor renames using the project assembly kind
+
+### Other
+
+- move detailed guides out of the README
+- publish CLI when the release PR is merged
+- open release PRs automatically
+- reuse SDK restore after standalone AOT edits
+- reuse Native AOT publish stages and outputs
+- reduce JIT script startup overhead
+- reuse NuGet outputs with analyzer-only targets
+- reuse NuGet dependencies after source edits
+- reuse locked NuGet run bundles
+- avoid temporary arrays in short string interpolation
+- add a verified CLI release workflow
+- reuse checked bodies during hot reload
+- skip SDK packaging for framework-only execution
+- lock down explicit CLR argument passing modes
+- add a manual Git-only release workflow
+- package the Apache license text with each crate
+- use release-plz in Git-only mode
+- license Oxel under Apache-2.0
+- verify emitted assemblies with ILVerify
+- manage workspace releases with release-plz
+- move the CLI into the oxel-cli workspace crate
+
 ### Highlights
 
 - The Rust compiler emits managed CLR executables and libraries for .NET 10 or newer. Use `oxel check`, `oxel compile` and `oxel run` for CoreCLR development, and `oxel publish` with the .NET SDK for Native AOT deployment.
