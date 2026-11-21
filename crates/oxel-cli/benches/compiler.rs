@@ -91,17 +91,41 @@ fn main() {
         managed::compare_csharp(binary, folder.path());
     }
     if std::env::var_os("OXEL_BENCH_NATIVE").is_some() {
+        let source = folder.path().join("native.oxel");
+        std::fs::write(&source, hello).unwrap();
+        let publish = || {
+            completed(
+                Command::new(binary)
+                    .current_dir(folder.path())
+                    .args(["publish", "native.oxel"]),
+            );
+        };
         let start = Instant::now();
-        cli("publish");
+        publish();
         println!(
             "{:<25} {:>10.2?} (one publish)",
-            "Native AOT hello / publish",
+            "Native AOT hello / first publish",
+            start.elapsed()
+        );
+        measure("Native AOT hello / unchanged", publish);
+        std::fs::write(&source, hello.replace("add(10, 20)", "add(10, 35)")).unwrap();
+        let start = Instant::now();
+        publish();
+        println!(
+            "{:<25} {:>10.2?} (one publish)",
+            "Native AOT hello / edited",
             start.elapsed()
         );
         let executable = folder
             .path()
             .join("target/oxel/native")
-            .join(format!("hello{}", std::env::consts::EXE_SUFFIX));
+            .join(format!("native{}", std::env::consts::EXE_SUFFIX));
+        assert_eq!(
+            String::from_utf8(output(&mut Command::new(&executable)))
+                .unwrap()
+                .trim(),
+            "45"
+        );
         println!(
             "{:<25} {:>10} bytes",
             "Native AOT hello / size",

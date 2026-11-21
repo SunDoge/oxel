@@ -3,6 +3,7 @@
 ## 0.1.0
 
 - The Rust compiler emits managed CLR executables and libraries for .NET 10 or newer. Use `oxel check`, `oxel compile` and `oxel run` for CoreCLR development, and `oxel publish` with the .NET SDK for Native AOT deployment.
+- Reuse SDK intermediates for Native AOT publishing and verified native output on unchanged publishes without NuGet package dependencies.
 - Entry points can return `Result<T, E>` or a CLR `Task` or `ValueTask`. The launcher waits for asynchronous completion and maps the result to the process exit status.
 - Declare `async fn` to return a CLR task. Postfix `.await` suspends on incomplete `Task` and `ValueTask` values and supports chaining member calls on the awaited result.
 - Await tasks inside `try` and `catch` blocks. Use `async` lambdas with CLR delegates that return `Task`, `ValueTask`, or `void`.

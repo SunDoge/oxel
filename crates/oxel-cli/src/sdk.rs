@@ -15,7 +15,7 @@ use std::{
 use oxel::AssemblyKind;
 use snafu::{ResultExt, Snafu};
 
-use crate::{Dependency, artifact_directory, manifest, write_dependencies, write_file};
+use crate::{Dependency, aot, artifact_directory, manifest, write_dependencies, write_file};
 
 type SdkResult<T> = Result<T, Error>;
 
@@ -65,11 +65,26 @@ pub(super) enum LockMode {
 }
 
 pub(super) struct SdkProject {
-    stage: tempfile::TempDir,
+    stage: Stage,
     pub references: Vec<PathBuf>,
     pub framework_references: Vec<PathBuf>,
     pub lock: Option<PathBuf>,
     rid: Option<String>,
+    reuse_native_output: bool,
+}
+
+enum Stage {
+    Temporary(tempfile::TempDir),
+    Native(aot::Cache),
+}
+
+impl Stage {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Temporary(stage) => stage.path(),
+            Self::Native(cache) => cache.path(),
+        }
+    }
 }
 
 pub(super) enum Resolution {
@@ -262,14 +277,19 @@ fn stage_project(project: &Path) -> io::Result<tempfile::TempDir> {
     let artifacts = artifact_directory(project);
     fs::create_dir_all(&artifacts)?;
     let stage = tempfile::TempDir::with_prefix_in("nuget-", &artifacts)?;
+    isolate_stage(stage.path())?;
+    Ok(stage)
+}
+
+pub(super) fn isolate_stage(directory: &Path) -> io::Result<()> {
     for name in [
         "Directory.Build.props",
         "Directory.Build.targets",
         "Directory.Packages.props",
     ] {
-        fs::write(stage.path().join(name), "<Project />")?;
+        aot::write_if_changed(&directory.join(name), b"<Project />")?;
     }
-    Ok(stage)
+    Ok(())
 }
 
 impl SdkProject {
@@ -291,26 +311,46 @@ impl SdkProject {
         kind: AssemblyKind,
     ) -> SdkResult<Self> {
         let project = manifest::directory(manifest);
-        let (sdk, framework) = match selected {
-            Some(selection) => selection.clone(),
-            None => version(project)?,
+        let ((sdk, framework), sdk_path) = match selected {
+            Some(selection) => (selection.clone(), None),
+            None if native && mode != LockMode::Refresh => run_version(project)?,
+            None => (version(project)?, None),
         };
+        let xml = project_xml(
+            name,
+            &framework,
+            native,
+            packages,
+            kind,
+            references_framework,
+        );
         // Keep the staging project beneath the manifest to pick up the normal
         // NuGet.Config hierarchy, including project-relative package feeds.
-        let stage = stage_project(project)?;
+        let cached = native && mode != LockMode::Refresh;
+        let cache = cached
+            .then(|| {
+                aot::Cache::open(
+                    project,
+                    sdk_path.as_deref(),
+                    &[
+                        b"sdk project",
+                        manifest.as_os_str().as_encoded_bytes(),
+                        sdk.as_bytes(),
+                        xml.as_bytes(),
+                    ],
+                )
+            })
+            .flatten();
+        let stage = match cache {
+            Some(cache) => {
+                isolate_stage(cache.path())?;
+                Stage::Native(cache)
+            }
+            None => Stage::Temporary(stage_project(project)?),
+        };
         let root = stage.path();
         pin(root, &sdk)?;
-        fs::write(
-            root.join("oxel.csproj"),
-            project_xml(
-                name,
-                &framework,
-                native,
-                packages,
-                kind,
-                references_framework,
-            ),
-        )?;
+        aot::write_if_changed(&root.join("oxel.csproj"), xml.as_bytes())?;
 
         let rid = if native {
             let rid = invoke(
@@ -361,7 +401,7 @@ impl SdkProject {
             }
             mode => match fs::read(&lock) {
                 Ok(bytes) => {
-                    fs::write(&staged_lock, &bytes)?;
+                    aot::write_if_changed(&staged_lock, &bytes)?;
                     args.push("-p:RestorePackagesWithLockFile=true".into());
                     args.push("-p:RestoreLockedMode=true".into());
                     args.push("-p:RestoreForceEvaluate=false".into());
@@ -370,6 +410,13 @@ impl SdkProject {
                 Err(error)
                     if error.kind() == io::ErrorKind::NotFound && mode == LockMode::IfPresent =>
                 {
+                    if matches!(&stage, Stage::Native(_)) {
+                        match fs::remove_file(&staged_lock) {
+                            Ok(()) => {}
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
                     None
                 }
                 Err(error) => return Err(error).context(ReadLockSnafu { path: lock }),
@@ -404,6 +451,9 @@ impl SdkProject {
             stage,
             references,
             framework_references,
+            // NuGet build targets can add publish inputs outside the managed
+            // assembly and restore graph. Let MSBuild run these targets.
+            reuse_native_output: packages.is_empty(),
             lock,
             rid,
         })
@@ -416,8 +466,6 @@ impl SdkProject {
         dependencies: &[Dependency],
     ) -> SdkResult<PathBuf> {
         let root = self.stage.path();
-        fs::write(root.join("input.dll"), bytes)?;
-        write_dependencies(&root.join("references"), dependencies)?;
         let mut args = [
             "oxel.csproj",
             "--no-restore",
@@ -437,8 +485,20 @@ impl SdkProject {
         } else {
             "build"
         };
-        invoke(root, command, &args)?;
         let output = root.join("output");
+        if let Stage::Native(cache) = &self.stage {
+            cache.build(
+                &output,
+                bytes,
+                dependencies,
+                self.reuse_native_output,
+                || invoke(root, command, &args).map(|_| ()),
+            )?;
+        } else {
+            fs::write(root.join("input.dll"), bytes)?;
+            write_dependencies(&root.join("references"), dependencies)?;
+            invoke(root, command, &args)?;
+        }
         if self.rid.is_none() && fs::read(output.join(format!("{name}.dll")))? != bytes {
             return MissingAssemblySnafu.fail();
         }
@@ -616,9 +676,9 @@ fn sdk_version(version: &str) -> SdkResult<(String, String)> {
 }
 
 pub(super) fn pin(directory: &Path, version: &str) -> io::Result<()> {
-    fs::write(
-        directory.join("global.json"),
-        format!(r#"{{"sdk":{{"version":"{version}","rollForward":"disable"}}}}"#),
+    aot::write_if_changed(
+        &directory.join("global.json"),
+        format!(r#"{{"sdk":{{"version":"{version}","rollForward":"disable"}}}}"#).as_bytes(),
     )
 }
 

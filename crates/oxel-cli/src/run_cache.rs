@@ -141,29 +141,7 @@ impl Cache {
         field(&mut base, format!("{:?}", inputs.framework).as_bytes());
         base.update(&[u8::from(inputs.debug)]);
         base.update(&(inputs.references.len() as u64).to_le_bytes());
-        let mut vars: Vec<_> = env::vars_os().collect();
-        vars.sort_unstable();
-        for (name, value) in vars {
-            if matches!(name.to_str(), Some("_" | "PWD" | "OLDPWD" | "SHLVL")) {
-                continue;
-            }
-            let upper = name.to_string_lossy().to_ascii_uppercase();
-            if [
-                "MSBUILD",
-                "DOTNET_MSBUILD",
-                "CUSTOMBEFORE",
-                "CUSTOMAFTER",
-                "DIRECTORYBUILD",
-                "IMPORT",
-            ]
-            .iter()
-            .any(|prefix| upper.starts_with(prefix))
-            {
-                return None;
-            }
-            field(&mut base, name.as_encoded_bytes());
-            field(&mut base, value.as_encoded_bytes());
-        }
+        hash_environment(&mut base).ok()?;
         let key = fingerprint(&base, &files, &project, inputs.manifest_hash).ok()?;
         let source_key = paths_hash("oxel run sources", inputs.sources).ok()?;
         let entry = artifact_directory(&project)
@@ -350,12 +328,12 @@ fn fingerprint(
     Ok(hash.finalize())
 }
 
-fn field(hash: &mut blake3::Hasher, bytes: &[u8]) {
+pub(super) fn field(hash: &mut blake3::Hasher, bytes: &[u8]) {
     hash.update(&(bytes.len() as u64).to_le_bytes());
     hash.update(bytes);
 }
 
-fn file_digest(path: &Path) -> io::Result<blake3::Hash> {
+pub(super) fn file_digest(path: &Path) -> io::Result<blake3::Hash> {
     require_regular_file(path)?;
     let file = fs::File::open(path)?;
     Ok(blake3::Hasher::new().update_reader(file)?.finalize())
@@ -368,7 +346,7 @@ fn require_regular_file(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn hash_file(hash: &mut blake3::Hasher, path: &Path) -> io::Result<()> {
+pub(super) fn hash_file(hash: &mut blake3::Hasher, path: &Path) -> io::Result<()> {
     hash_path(hash, path, file_digest(path)?)
 }
 
@@ -381,7 +359,34 @@ fn hash_path(hash: &mut blake3::Hasher, path: &Path, content: blake3::Hash) -> i
     Ok(())
 }
 
-fn hash_config(hash: &mut blake3::Hasher, project: &Path) -> io::Result<()> {
+pub(super) fn hash_environment(hash: &mut blake3::Hasher) -> io::Result<()> {
+    let mut vars: Vec<_> = env::vars_os().collect();
+    vars.sort_unstable();
+    for (name, value) in vars {
+        if matches!(name.to_str(), Some("_" | "PWD" | "OLDPWD" | "SHLVL")) {
+            continue;
+        }
+        let upper = name.to_string_lossy().to_ascii_uppercase();
+        if [
+            "MSBUILD",
+            "DOTNET_MSBUILD",
+            "CUSTOMBEFORE",
+            "CUSTOMAFTER",
+            "DIRECTORYBUILD",
+            "IMPORT",
+        ]
+        .iter()
+        .any(|prefix| upper.starts_with(prefix))
+        {
+            return Err(io::Error::other("custom MSBuild environment"));
+        }
+        field(hash, name.as_encoded_bytes());
+        field(hash, value.as_encoded_bytes());
+    }
+    Ok(())
+}
+
+pub(super) fn hash_config(hash: &mut blake3::Hasher, project: &Path) -> io::Result<()> {
     let artifacts = artifact_directory(project);
     let physical = fs::canonicalize(project)?;
     for directory in artifacts.ancestors().chain(physical.ancestors()) {
@@ -438,7 +443,10 @@ fn hash_extra_config(hash: &mut blake3::Hasher, directory: &Path) -> io::Result<
     Ok(())
 }
 
-fn config_files(directory: &Path, matches: impl Fn(&str) -> bool) -> io::Result<Vec<PathBuf>> {
+pub(super) fn config_files(
+    directory: &Path,
+    matches: impl Fn(&str) -> bool,
+) -> io::Result<Vec<PathBuf>> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),

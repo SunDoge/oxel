@@ -896,6 +896,8 @@ When the SDK publishes companion runtime files, oxel places the executable and i
 
 The SDK consumes oxel's managed assembly directly. Use repeatable `--reference` flags for managed implementation DLLs. Referenced code must support Native AOT and trimming. SDK failures go to standard error so scripts can read the executable path from standard output.
 
+Repeated publishing can reuse SDK intermediates under `target/oxel/aot-cache/`. For projects without NuGet package dependencies, unchanged managed assemblies and publish settings can also reuse the verified native output directly. NuGet-backed projects still run the SDK's restore and publish targets. Delete `target/oxel/aot-cache/` to force a fresh native build.
+
 ## Editor support
 
 ### Zed
@@ -1034,7 +1036,7 @@ OXEL_BENCH_NATIVE=1 cargo bench --bench compiler --locked
 
 The tests check invalid programs, deterministic image bytes, and actual execution on CoreCLR through both `oxel run` and a separately compiled DLL. To independently verify the emitted CIL, install Microsoft's `dotnet-ilverify` for your .NET runtime and run `cargo test --locked --test cil_verification -- --ignored`. Put `ilverify` on `PATH` or set `OXEL_ILVERIFY` to its executable path. The test uses the installed runtime assemblies and verifies the example DLLs and the synthesized unit test runner. [Microsoft ILVerify](https://www.nuget.org/packages/dotnet-ilverify/)
 
-The benchmark measures in-process check and compile for the example, a generated 500-function source, and larger numeric and generic workloads. Run it with `OXEL_JOBS=1` and `OXEL_JOBS=4` in separate processes to compare the same workloads. It also compares fresh analysis of 20 files with cached analysis after a function-body, signature, or constant-value edit. A 21-file workload measures formatting edits and changes to a field type. A separate workload edits a runtime function that uses an expensive comptime constant and then edits an unrelated type. CLI measurements include fresh compiler process startup with warm filesystem caches. The CoreCLR measurement runs the existing DLL and includes runtime startup, initial JIT and execution. The opt-in Native AOT benchmark reports publish time, executable size and the time to start and run that executable.
+The benchmark measures in-process check and compile for the example, a generated 500-function source, and larger numeric and generic workloads. Run it with `OXEL_JOBS=1` and `OXEL_JOBS=4` in separate processes to compare the same workloads. It also compares fresh analysis of 20 files with cached analysis after a function-body, signature, or constant-value edit. A 21-file workload measures formatting edits and changes to a field type. A separate workload edits a runtime function that uses an expensive comptime constant and then edits an unrelated type. CLI measurements include fresh compiler process startup with warm filesystem caches. The CoreCLR measurement runs the existing DLL and includes runtime startup, initial JIT and execution. The opt-in Native AOT benchmark reports first publish, unchanged republish and republish after a source edit, plus executable size and startup time.
 
 The 20-file workload also compares full compilation and incremental emission after editing one method. To measure from save until the changed program prints its result, run the edit-loop benchmark on Linux or macOS with Python, Go, and the .NET 10 SDK.
 
