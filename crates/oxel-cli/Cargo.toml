@@ -36,3 +36,6 @@ usage-rs = { version = "7.4", default-features = false, features = ["help", "dia
 [[bench]]
 name = "compiler"
 harness = false
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libloading = "0.8.9"

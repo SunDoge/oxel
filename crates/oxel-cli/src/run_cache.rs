@@ -1,6 +1,7 @@
 //! Reuses the SDK's dependency outputs across edits to locked NuGet scripts.
 
 use std::{
+    collections::HashMap,
     env,
     ffi::OsStr,
     fs, io,
@@ -33,25 +34,84 @@ pub(super) struct Cache {
 
 pub(super) enum Hit {
     Exact(PathBuf),
-    Edit(tempfile::TempDir, sdk::RunReferences),
+    Edit(EditBundle, VerifiedReferences),
+}
+
+pub(super) struct EditBundle {
+    stage: tempfile::TempDir,
+    assets_hash: [u8; 32],
+}
+
+impl EditBundle {
+    pub fn path(&self) -> &Path {
+        self.stage.path()
+    }
+
+    pub fn integrity(&self, assembly: &[u8]) -> BundleIntegrity {
+        BundleIntegrity {
+            assets_hash: self.assets_hash,
+            assembly_hash: *blake3::hash(assembly).as_bytes(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+pub(super) struct BundleIntegrity {
+    assets_hash: [u8; 32],
+    assembly_hash: [u8; 32],
+}
+
+impl BundleIntegrity {
+    pub fn read(output: &Path, name: &str) -> io::Result<Self> {
+        let assembly = format!("{name}.dll");
+        Ok(Self {
+            assets_hash: *sdk::folder_hash_without(output, OsStr::new(&assembly))?.as_bytes(),
+            assembly_hash: *assembly_digest(&output.join(assembly))?.as_bytes(),
+        })
+    }
+}
+
+pub(super) struct VerifiedReferences {
+    pub record: ReferenceRecord,
+    pub assemblies: HashMap<PathBuf, Vec<u8>>,
 }
 
 #[derive(Deserialize, Serialize)]
 struct Record {
     directory: String,
-    bundle_hash: [u8; 32],
+    integrity: BundleIntegrity,
     source_hash: [u8; 32],
     references: Option<ReferenceRecord>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct ReferenceRecord {
-    inputs: sdk::RunReferences,
+#[derive(Clone, Deserialize, Serialize)]
+pub(super) struct ReferenceRecord {
+    pub inputs: sdk::RunReferences,
     hash: [u8; 32],
 }
 
+impl ReferenceRecord {
+    pub fn capture(inputs: sdk::RunReferences) -> Option<Self> {
+        let hash = *reference_hash(&inputs, None).ok()?.as_bytes();
+        Some(Self { inputs, hash })
+    }
+
+    fn verify(self) -> Option<VerifiedReferences> {
+        let mut assemblies = HashMap::new();
+        let hash = reference_hash(&self.inputs, Some(&mut assemblies)).ok()?;
+        (hash.as_bytes() == &self.hash).then_some(VerifiedReferences {
+            record: self,
+            assemblies,
+        })
+    }
+}
+
 impl Cache {
-    pub fn prepare(inputs: Inputs<'_>, selection: &(String, String)) -> Option<Self> {
+    pub fn prepare(
+        inputs: Inputs<'_>,
+        selection: &(String, String),
+        sdk_path: Option<&Path>,
+    ) -> Option<Self> {
         let project =
             std::path::absolute(manifest::directory(inputs.package.manifest).join(".")).ok()?;
         let lock = sdk::lock_path(inputs.package.manifest, &selection.1, None);
@@ -70,10 +130,14 @@ impl Cache {
             )
             .map(Path::to_path_buf)
             .collect();
-        let mut base = blake3::Hasher::new_derive_key("oxel locked run bundle v2");
+        let mut base = blake3::Hasher::new_derive_key("oxel locked run bundle v3");
         field(&mut base, project.as_os_str().as_encoded_bytes());
         field(&mut base, selection.0.as_bytes());
         field(&mut base, selection.1.as_bytes());
+        field(
+            &mut base,
+            sdk_path.map_or(&[][..], |path| path.as_os_str().as_encoded_bytes()),
+        );
         field(&mut base, format!("{:?}", inputs.framework).as_bytes());
         base.update(&[u8::from(inputs.debug)]);
         base.update(&(inputs.references.len() as u64).to_le_bytes());
@@ -132,32 +196,40 @@ impl Cache {
         }
         let bundle = self.entry.join(record.directory).join("output");
         let assembly = format!("{name}.dll");
+        let assembly_name = OsStr::new(&assembly);
         let dll = bundle.join(&assembly);
         if !fs::symlink_metadata(&bundle).ok()?.is_dir()
-            || !dll.is_file()
-            || sdk::folder_hash(&bundle).ok()?.as_bytes() != &record.bundle_hash
+            || sdk::folder_hash_without(&bundle, assembly_name)
+                .ok()?
+                .as_bytes()
+                != &record.integrity.assets_hash
         {
             return None;
         }
         if self.source_key.as_bytes() == &record.source_hash {
-            return Some(Hit::Exact(dll));
+            return (assembly_digest(&dll).ok()?.as_bytes() == &record.integrity.assembly_hash)
+                .then_some(Hit::Exact(dll));
         }
-        let references = record.references?;
-        if reference_hash(&references.inputs).ok()?.as_bytes() != &references.hash {
-            return None;
-        }
+        let references = record.references?.verify()?;
         let stage = tempfile::Builder::new()
             .prefix(".edit-")
             .tempdir_in(&self.entry)
             .ok()?;
-        stage_assets(&bundle, stage.path(), Some(OsStr::new(&assembly))).ok()?;
-        Some(Hit::Edit(stage, references.inputs))
+        stage_assets(&bundle, stage.path(), Some(assembly_name)).ok()?;
+        Some(Hit::Edit(
+            EditBundle {
+                stage,
+                assets_hash: record.integrity.assets_hash,
+            },
+            references,
+        ))
     }
 
     pub fn publish(
         &self,
         output: &Path,
-        references: Option<sdk::RunReferences>,
+        references: Option<ReferenceRecord>,
+        integrity: BundleIntegrity,
     ) -> Option<PathBuf> {
         // The SDK and compiler read inputs independently. Publish only for a
         // snapshot that still matches the one taken before building.
@@ -166,7 +238,6 @@ impl Cache {
         {
             return None;
         }
-        let digest = sdk::folder_hash(output).ok()?;
         fs::create_dir_all(&self.entry).ok()?;
         let stage = tempfile::Builder::new()
             .prefix("bundle-")
@@ -174,12 +245,9 @@ impl Cache {
             .ok()?;
         let record = Record {
             directory: stage.path().file_name()?.to_str()?.to_owned(),
-            bundle_hash: *digest.as_bytes(),
+            integrity,
             source_hash: *self.source_key.as_bytes(),
-            references: references.and_then(|inputs| {
-                let hash = *reference_hash(&inputs).ok()?.as_bytes();
-                Some(ReferenceRecord { inputs, hash })
-            }),
+            references,
         };
         let record = serde_json::to_vec(&record).ok()?;
         let bundle = stage.path().join("output");
@@ -190,6 +258,13 @@ impl Cache {
         let _ = write_file(&self.entry.join("latest"), &record);
         Some(bundle)
     }
+}
+
+fn assembly_digest(path: &Path) -> io::Result<blake3::Hash> {
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(io::Error::other("cached assembly is not a regular file"));
+    }
+    file_digest(path)
 }
 
 fn stage_assets(source: &Path, destination: &Path, skip: Option<&OsStr>) -> io::Result<()> {
@@ -216,13 +291,27 @@ fn stage_assets(source: &Path, destination: &Path, skip: Option<&OsStr>) -> io::
     Ok(())
 }
 
-fn reference_hash(inputs: &sdk::RunReferences) -> io::Result<blake3::Hash> {
+fn reference_hash(
+    inputs: &sdk::RunReferences,
+    mut assemblies: Option<&mut HashMap<PathBuf, Vec<u8>>>,
+) -> io::Result<blake3::Hash> {
     let mut hash = blake3::Hasher::new_derive_key("oxel cached SDK references");
-    for paths in [&inputs.packages, &inputs.framework, &inputs.build_files] {
+    for paths in [&inputs.packages, &inputs.framework] {
         hash.update(&(paths.len() as u64).to_le_bytes());
         for path in paths {
-            hash_file(&mut hash, path)?;
+            if let Some(assemblies) = assemblies.as_deref_mut() {
+                require_regular_file(path)?;
+                let bytes = fs::read(path)?;
+                hash_path(&mut hash, path, blake3::hash(&bytes))?;
+                assemblies.insert(path.clone(), bytes);
+            } else {
+                hash_file(&mut hash, path)?;
+            }
         }
+    }
+    hash.update(&(inputs.build_files.len() as u64).to_le_bytes());
+    for path in &inputs.build_files {
+        hash_file(&mut hash, path)?;
     }
     Ok(hash.finalize())
 }
@@ -267,19 +356,28 @@ fn field(hash: &mut blake3::Hasher, bytes: &[u8]) {
 }
 
 fn file_digest(path: &Path) -> io::Result<blake3::Hash> {
-    if !fs::metadata(path)?.is_file() {
-        return Err(io::Error::other("cache input is not a file"));
-    }
+    require_regular_file(path)?;
     let file = fs::File::open(path)?;
     Ok(blake3::Hasher::new().update_reader(file)?.finalize())
 }
 
+fn require_regular_file(path: &Path) -> io::Result<()> {
+    if !fs::metadata(path)?.is_file() {
+        return Err(io::Error::other("cache input is not a file"));
+    }
+    Ok(())
+}
+
 fn hash_file(hash: &mut blake3::Hasher, path: &Path) -> io::Result<()> {
+    hash_path(hash, path, file_digest(path)?)
+}
+
+fn hash_path(hash: &mut blake3::Hasher, path: &Path, content: blake3::Hash) -> io::Result<()> {
     field(
         hash,
         std::path::absolute(path)?.as_os_str().as_encoded_bytes(),
     );
-    hash.update(file_digest(path)?.as_bytes());
+    hash.update(content.as_bytes());
     Ok(())
 }
 
@@ -354,4 +452,46 @@ fn config_files(directory: &Path, matches: impl Fn(&str) -> bool) -> io::Result<
         }
     }
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_reference_bytes_stay_bound_to_the_cached_digest() {
+        let folder = tempfile::tempdir().unwrap();
+        let reference = folder.path().join("reference.dll");
+        fs::write(&reference, b"first image").unwrap();
+        let snapshot = ReferenceRecord::capture(sdk::RunReferences {
+            packages: vec![reference.clone()],
+            framework: Vec::new(),
+            build_files: Vec::new(),
+        })
+        .unwrap();
+        let verified = snapshot.clone().verify().unwrap();
+        fs::write(&reference, b"other image").unwrap();
+        assert_eq!(verified.assemblies[&reference], b"first image");
+        assert!(snapshot.verify().is_none());
+    }
+
+    #[test]
+    fn app_edits_and_runtime_asset_changes_have_independent_digests() {
+        let folder = tempfile::tempdir().unwrap();
+        let assembly = folder.path().join("app.dll");
+        let asset = folder.path().join("dependency.dll");
+        fs::write(&assembly, b"old code").unwrap();
+        fs::write(&asset, b"old dependency").unwrap();
+        let original = BundleIntegrity::read(folder.path(), "app").unwrap();
+
+        fs::write(&assembly, b"new code").unwrap();
+        let edited = BundleIntegrity::read(folder.path(), "app").unwrap();
+        assert_ne!(original.assembly_hash, edited.assembly_hash);
+        assert_eq!(original.assets_hash, edited.assets_hash);
+
+        fs::write(&asset, b"new dependency").unwrap();
+        let changed = BundleIntegrity::read(folder.path(), "app").unwrap();
+        assert_eq!(edited.assembly_hash, changed.assembly_hash);
+        assert_ne!(edited.assets_hash, changed.assets_hash);
+    }
 }

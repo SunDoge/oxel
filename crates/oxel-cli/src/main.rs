@@ -11,6 +11,7 @@ mod run_cache;
 mod sdk;
 
 use std::{
+    borrow::Cow,
     env,
     ffi::OsString,
     fs,
@@ -40,7 +41,7 @@ struct Run {
     reload: Option<(PathBuf, bool)>,
     debug: bool,
     cache: Option<run_cache::Cache>,
-    edit_bundle: Option<tempfile::TempDir>,
+    edit_bundle: Option<run_cache::EditBundle>,
 }
 
 fn main() -> ExitCode {
@@ -157,39 +158,38 @@ fn cli(run: &mut Run) -> ExitCode {
     if matches!(action, Action::Run)
         && !nuget.is_empty()
         && let Some((package, manifest_hash)) = package.zip(manifest_hash)
+        && let Ok((selection, sdk_path)) = sdk::run_version(manifest::directory(package.manifest))
     {
-        selected_sdk = sdk::version(manifest::directory(package.manifest)).ok();
-        if let Some(selection) = &selected_sdk {
-            let inputs = run_cache::Inputs {
-                package,
-                manifest_hash,
-                sources: &sources,
-                references: &references,
-                framework,
-                debug,
-            };
-            run.cache = run_cache::Cache::prepare(inputs, selection);
-            if let Some(hit) = run
-                .cache
-                .as_ref()
-                .and_then(|cache| cache.lookup(package.name))
-            {
-                match hit {
-                    run_cache::Hit::Exact(dll) => {
-                        return run_dll(package.manifest, &dll, format, run);
-                    }
-                    run_cache::Hit::Edit(bundle, cached) => {
-                        run.edit_bundle = Some(bundle);
-                        return execute(
-                            action,
-                            &sources,
-                            &references,
-                            Some(package),
-                            Some(&sdk::Resolution::Cached(cached)),
-                            format,
-                            run,
-                        );
-                    }
+        let inputs = run_cache::Inputs {
+            package,
+            manifest_hash,
+            sources: &sources,
+            references: &references,
+            framework,
+            debug,
+        };
+        run.cache = run_cache::Cache::prepare(inputs, &selection, sdk_path.as_deref());
+        selected_sdk = Some(selection);
+        if let Some(hit) = run
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.lookup(package.name))
+        {
+            match hit {
+                run_cache::Hit::Exact(dll) => {
+                    return run_dll(package.manifest, &dll, format, run);
+                }
+                run_cache::Hit::Edit(bundle, cached) => {
+                    run.edit_bundle = Some(bundle);
+                    return execute(
+                        action,
+                        &sources,
+                        &references,
+                        Some(package),
+                        Some(&sdk::Resolution::Cached(cached)),
+                        format,
+                        run,
+                    );
                 }
             }
         }
@@ -429,9 +429,11 @@ fn execute(
             );
         }
         let output = match (application.cache.as_ref(), restored) {
-            (Some(cache), Some(sdk::Resolution::Cached(inputs))) => {
-                cache.publish(bundle.path(), Some(inputs.clone()))
-            }
+            (Some(cache), Some(sdk::Resolution::Cached(inputs))) => cache.publish(
+                bundle.path(),
+                Some(inputs.record.clone()),
+                bundle.integrity(&bytes),
+            ),
             _ => None,
         };
         let dll = output.map_or(dll, |path| path.join(format!("{name}.dll")));
@@ -457,7 +459,13 @@ fn execute(
                     .cache
                     .as_ref()
                     .filter(|cache| restored.lock.as_deref() == Some(cache.lock()))
-                    .and_then(|cache| cache.publish(&output, restored.run_references()))
+                    .and_then(|cache| {
+                        let inputs = restored
+                            .run_references()
+                            .and_then(run_cache::ReferenceRecord::capture);
+                        let integrity = run_cache::BundleIntegrity::read(&output, name).ok()?;
+                        cache.publish(&output, inputs, integrity)
+                    })
                     .unwrap_or(output);
                 return run_dll(
                     origin,
@@ -559,7 +567,12 @@ fn load_references(
         .chain(reference_paths.iter().map(|path| (path, true, false)))
         .chain(packages.map(|path| (path, false, false)));
     for (reference, copy, framework) in paths {
-        let bytes = match fs::read(reference) {
+        let bytes = match sdk
+            .and_then(|input| input.cached_reference(reference))
+            .map_or_else(
+                || fs::read(reference).map(Cow::Owned),
+                |bytes| Ok(Cow::Borrowed(bytes)),
+            ) {
             Ok(bytes) => bytes,
             Err(err) => {
                 return Err(format.error(
@@ -598,7 +611,10 @@ fn load_references(
             ));
         }
         if copy {
-            dependencies.push(Dependency { name, bytes });
+            dependencies.push(Dependency {
+                name,
+                bytes: bytes.into_owned(),
+            });
         }
     }
     Ok((references, dependencies))

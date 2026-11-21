@@ -1,6 +1,8 @@
 //! Stages SDK projects for framework and NuGet references and packaging.
 
 mod framework;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod host;
 mod run_inputs;
 
 use std::{
@@ -74,7 +76,7 @@ pub(super) enum Resolution {
     Installed(InstalledFramework),
     Framework(Vec<PathBuf>),
     Project(SdkProject),
-    Cached(run_inputs::References),
+    Cached(crate::run_cache::VerifiedReferences),
 }
 
 pub(super) use run_inputs::References as RunReferences;
@@ -102,15 +104,23 @@ impl Resolution {
             Self::Project(project) => &project.framework_references,
             Self::Framework(references) => references,
             Self::Installed(pack) => &pack.references,
-            Self::Cached(inputs) => &inputs.framework,
+            Self::Cached(inputs) => &inputs.record.inputs.framework,
         }
     }
 
     pub fn package_references(&self) -> &[PathBuf] {
         match self {
             Self::Project(project) => &project.references,
-            Self::Cached(inputs) => &inputs.packages,
+            Self::Cached(inputs) => &inputs.record.inputs.packages,
             _ => &[],
+        }
+    }
+
+    pub fn cached_reference(&self, path: &Path) -> Option<&[u8]> {
+        if let Self::Cached(inputs) = self {
+            inputs.assemblies.get(path).map(Vec::as_slice)
+        } else {
+            None
         }
     }
 
@@ -490,10 +500,26 @@ pub(super) fn store_directory(root: &Path, output: &Path) -> io::Result<PathBuf>
 }
 
 pub(super) fn folder_hash(root: &Path) -> io::Result<blake3::Hash> {
-    fn walk(folder: &Path, root: &Path, hash: &mut blake3::Hasher) -> io::Result<()> {
+    folder_digest(root, None)
+}
+
+pub(super) fn folder_hash_without(root: &Path, file: &std::ffi::OsStr) -> io::Result<blake3::Hash> {
+    folder_digest(root, Some(file))
+}
+
+fn folder_digest(root: &Path, skip: Option<&std::ffi::OsStr>) -> io::Result<blake3::Hash> {
+    fn walk(
+        folder: &Path,
+        root: &Path,
+        hash: &mut blake3::Hasher,
+        skip: Option<&std::ffi::OsStr>,
+    ) -> io::Result<()> {
         let mut entries = fs::read_dir(folder)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(fs::DirEntry::file_name);
         for entry in entries {
+            if skip.is_some_and(|file| entry.file_name() == file) {
+                continue;
+            }
             let path = entry.path();
             let name = path.strip_prefix(root).expect("SDK output within root");
             let name = name.as_os_str().as_encoded_bytes();
@@ -502,7 +528,7 @@ pub(super) fn folder_hash(root: &Path) -> io::Result<blake3::Hash> {
             let kind = entry.file_type()?;
             if kind.is_dir() {
                 hash.update(b"D");
-                walk(&path, root, hash)?;
+                walk(&path, root, hash, None)?;
             } else if kind.is_file() {
                 hash.update(b"F");
                 let file = fs::File::open(&path)?;
@@ -518,7 +544,7 @@ pub(super) fn folder_hash(root: &Path) -> io::Result<blake3::Hash> {
         Ok(())
     }
     let mut hash = blake3::Hasher::new_derive_key("oxel SDK output");
-    walk(root, root, &mut hash)?;
+    walk(root, root, &mut hash, skip)?;
     Ok(hash.finalize())
 }
 
@@ -553,6 +579,22 @@ pub(super) fn version(project: &Path) -> SdkResult<(String, String)> {
     };
     let output = invoke(root, "--version", &[] as &[&str])?;
     sdk_version(output.trim())
+}
+
+pub(super) fn run_version(project: &Path) -> SdkResult<((String, String), Option<PathBuf>)> {
+    let project = if project.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        project
+    };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(directory) = host::resolve(project)
+        && let Some(version) = directory.file_name().and_then(|name| name.to_str())
+        && let Ok(selection) = sdk_version(version)
+    {
+        return Ok((selection, Some(directory)));
+    }
+    version(project).map(|selection| (selection, None))
 }
 
 fn sdk_version(version: &str) -> SdkResult<(String, String)> {

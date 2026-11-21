@@ -256,6 +256,8 @@ NuGet projects use the SDK package cache when restoring dependencies, including 
 
 When the selected SDK's NuGet lock file exists, `oxel run` can reuse a verified executable bundle under `target/oxel/run-cache`. Unchanged builds start the existing DLL. After a source edit, Oxel can compile a new DLL against the cached CLR references and stage it beside the existing runtime assets. Recognized filters that only remove Roslyn analyzers also allow reuse, because the SDK packages an assembly already compiled by Oxel. Package build targets that can transform the application assembly or generate other outputs use the full SDK build. Changes to the manifest, lock, local CLR or native libraries, compiler, SDK selection, build environment or NuGet configuration invalidate the dependency snapshot. Runtime arguments can change between cached runs. Keep cached bundles and their shared assets read-only. Remove `target/oxel/run-cache` when no scripts are running to reclaim cached bundles.
 
+On Linux and macOS, JIT runs of NuGet projects query the SDK through its native host when Oxel can locate the selected installation. The resolver honors `global.json`, and other installations use the CLI's SDK query. During source edits, the compiler checks types from the same reference bytes used to verify the cache. The updated application DLL gets its own digest, and unchanged runtime assets keep their verified digest.
+
 ### NuGet lock files
 
 ```sh
