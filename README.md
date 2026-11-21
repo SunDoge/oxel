@@ -1010,9 +1010,7 @@ Commits follow Conventional Commits. Run `mise install` for the project tools an
 
 Release-plz runs in Git-only mode. It uses the last `v<version>` tag as the baseline for both Cargo packages and includes compiler changes in the root `CHANGELOG.md`. Each release creates one Git tag and a matching forge release, such as `v0.1.0`. Run `release-plz update` on a clean branch to review version and changelog edits. With the forge and Git credentials configured, run `release-plz release --dry-run` to preview the release. Use `cargo package --workspace --locked` to verify the crate archives separately. [Release-plz Git-only configuration](https://release-plz.dev/docs/config#the-git_only-field)
 
-The [Release PR workflow](.github/workflows/release-plz.yml) runs on pushes to `main` and opens or updates a pull request when release-plz proposes version or changelog changes. Enable **Allow GitHub Actions to create and approve pull requests** under **Settings → Actions → General** so the workflow's `GITHUB_TOKEN` can create the PR. [Release-plz GitHub setup](https://release-plz.dev/docs/github/quickstart)
-
-Run [Release CLI](.github/workflows/release-cli.yml) from the GitHub Actions tab or with `gh workflow run release-cli.yml`. The default run tests the workspace and uploads the verified Linux x86-64 bundle and its SHA-256 checksum as a workflow artifact. Run with `-f publish=true` on the default branch to publish those verified files through the Git-only release-plz workflow.
+The [Release workflow](.github/workflows/release.yml) opens or updates a release PR on pushes to `main`. Merge the release PR to test the workspace, build and verify the Linux x86-64 CLI bundle, and publish it with its SHA-256 checksum on GitHub Releases. Enable **Allow GitHub Actions to create and approve pull requests** under **Settings → Actions → General** so the workflow's `GITHUB_TOKEN` can create the PR. [Release-plz GitHub setup](https://release-plz.dev/docs/github/quickstart)
 
 To create and test the same bundle locally, use Linux x86-64 with Rust 1.91.0, the .NET 10 runtime, and `jq`.
 
@@ -1020,7 +1018,7 @@ To create and test the same bundle locally, use Linux x86-64 with Rust 1.91.0, t
 RUSTUP_TOOLCHAIN=1.91.0 bash scripts/package-cli.sh
 ```
 
-The archive and checksum are written to `target/preview`. Pass an output directory as the first argument to choose another location. [Running workflows manually](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+The archive and checksum are written to `target/preview`. Pass an output directory as the first argument to choose another location.
 
 ```sh
 cargo test --workspace --locked

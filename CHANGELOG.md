@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.1.0
+## [Unreleased]
+
+### Highlights
 
 - The Rust compiler emits managed CLR executables and libraries for .NET 10 or newer. Use `oxel check`, `oxel compile` and `oxel run` for CoreCLR development, and `oxel publish` with the .NET SDK for Native AOT deployment.
 - Reuse SDK intermediates for Native AOT publishing and verified native output on unchanged publishes without NuGet package dependencies.

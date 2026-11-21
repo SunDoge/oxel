@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    name: Prepare version and changelog
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    concurrency:
+      group: oxel-release-pr-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      RUSTUP_TOOLCHAIN: 1.91.0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the minimum Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Create or update the release PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+          version: 0.4.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Build and publish Linux x86-64 CLI
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release-plz-')
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: oxel-publish-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      RUSTUP_TOOLCHAIN: 1.91.0
+      MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Install the minimum Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Select the source that release-plz will tag
+        id: source
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git merge-base --is-ancestor "$PR_HEAD" "$MERGE_COMMIT"; then
+            git switch --detach "$PR_HEAD"
+          fi
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Test the workspace
+        run: cargo test --workspace --locked
+      - name: Build and verify the Linux bundle
+        id: package
+        shell: bash
+        run: bash scripts/package-cli.sh target/release-bundle
+      - name: Restore the merge commit for release-plz
+        run: git switch --detach "$MERGE_COMMIT"
+      - name: Create the release draft with release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          version: 0.4.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach the bundle and publish the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          RELEASE_BUNDLE: ${{ steps.package.outputs.bundle }}
+          RELEASE_DIR: target/release-bundle
+          SOURCE_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          git fetch origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_COMMIT"
+          if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" == "true" ]]; then
+            gh release upload "$RELEASE_TAG" "$RELEASE_DIR/$RELEASE_BUNDLE" "$RELEASE_DIR/SHA256SUMS" --clobber
+            gh release edit "$RELEASE_TAG" --verify-tag --draft=false
+          else
+            mkdir "$RELEASE_DIR/published"
+            gh release download "$RELEASE_TAG" --pattern "$RELEASE_BUNDLE" --pattern SHA256SUMS --dir "$RELEASE_DIR/published"
+            cd "$RELEASE_DIR/published"
+            cmp SHA256SUMS "$RELEASE_DIR/SHA256SUMS"
+            sha256sum -c SHA256SUMS
+          fi
