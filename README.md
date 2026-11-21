@@ -849,6 +849,38 @@ The SDK consumes oxel's managed assembly directly. Use repeatable `--reference` 
 
 ## Editor support
 
+### Zed
+
+The [Oxel extension](editors/zed) recognizes `.oxel` files and provides Tree-sitter highlighting, an outline, bracket matching, and auto-indentation. It starts the existing `oxel lsp` server for diagnostics, navigation, completion, and code actions.
+
+To use the extension from this checkout, put `oxel` on your `PATH` and stage a local extension.
+
+```sh
+cargo install --path crates/oxel-cli --locked
+python3 editors/zed/prepare-local.py
+```
+
+In Zed, run `zed: install dev extension` and select the path printed by the script. The script points Zed at the committed grammar in the local Git checkout. Dev-extension builds use the rustup `wasm32-wasip2` target and the WASI SDK. [Zed dev extensions](https://zed.dev/docs/extensions/developing-extensions)
+
+Open the directory containing `oxel.toml` to use its sources, test sources, and references. Open a standalone `.oxel` file for single-file analysis. To select a checkout binary, set both `path` and `arguments` in Zed settings. Include `lsp` as the first argument, and omit the manifest flags for standalone files. With the default `PATH` lookup, the extension selects the manifest automatically. [Zed language server settings](https://zed.dev/docs/configuring-languages)
+
+```json
+{
+  "lsp": {
+    "oxel-lsp": {
+      "binary": {
+        "path": "/absolute/path/to/oxel",
+        "arguments": ["lsp", "--manifest-path", "path/to/oxel.toml", "--tests"]
+      }
+    }
+  }
+}
+```
+
+To regenerate and test the editor grammar, run `npx --yes tree-sitter-cli@0.25.10 generate` and `npx --yes tree-sitter-cli@0.25.10 test` from `editors/tree-sitter-oxel`.
+
+### Other LSP clients
+
 Configure an editor's language client to start `oxel lsp` over stdio and associate it with `.oxel` files. Add `--reference path/to/Library.dll` to the server arguments for each managed dependency used in the editor session. The language server runs in Rust and can start without .NET. [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 
 The server provides live compiler diagnostics, an outline of functions, structs, enums and their members, hover information, jump to definition, find references, and completion. Pass `--manifest-path path/to/oxel.toml` or add one `--source path/to/file.oxel` argument per module input to enable cross-file analysis. For example, use `oxel lsp --source examples/project/main.oxel --source examples/project/geometry.oxel` to navigate between those two files. The configured module uses unsaved buffers for open files and disk snapshots for closed files. When the client supports file watching, the server registers the configured sources and refreshes the module after a closed file is changed, deleted, or recreated on disk. Open buffers remain authoritative until closed. Hover includes signatures for resolved CLR static calls. Find references uses compiler bindings, so it distinguishes shadowed names and can search the configured module, including closed files. Documents can be checked without a `main` declaration while editing.

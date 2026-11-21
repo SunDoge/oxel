@@ -1,0 +1,17 @@
+id = "oxel"
+name = "Oxel"
+description = "Syntax highlighting and language-server support for Oxel"
+version = "0.1.0"
+schema_version = 1
+authors = ["Oxel contributors"]
+repository = "https://github.com/SunDoge/oxel"
+
+[grammars.oxel]
+repository = "https://github.com/SunDoge/oxel"
+rev = "5e92149c37fb734777504363b6d8d85f0397d518"
+path = "editors/tree-sitter-oxel"
+
+[language_servers.oxel-lsp]
+languages = ["Oxel"]
+language_ids = { Oxel = "oxel" }
+code_action_kinds = ["quickfix"]
