@@ -1,0 +1,210 @@
+==================
+Generic interface and implementation
+==================
+
+namespace Examples;
+use System::Collections::{List, Dictionary};
+
+interface Read<T> {
+    fn read() -> T;
+}
+
+struct Cell<T> { value: T }
+
+impl<T> Read<T> for Cell<T> {
+    fn read(self: Cell<T>) -> T { self.value }
+}
+
+fn get<T: Read<i32>>(reader: T) -> i32 { reader.read() }
+
+---
+
+(source_file
+  (namespace_declaration
+    (path
+      (identifier)))
+  (use_declaration
+    (identifier)
+    (identifier)
+    (block
+      (identifier)
+      (identifier)))
+  (interface_declaration
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (method_body
+      (function_declaration
+        (identifier)
+        (parameters)
+        (type
+          (path
+            (identifier))))))
+  (struct_declaration
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (struct_body
+      (field_declaration
+        (identifier)
+        (type
+          (path
+            (identifier))))))
+  (implementation
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (type
+      (path
+        (identifier))
+      (type_arguments
+        (type
+          (path
+            (identifier)))))
+    (type
+      (path
+        (identifier))
+      (type_arguments
+        (type
+          (path
+            (identifier)))))
+    (method_body
+      (function_declaration
+        (identifier)
+        (parameters
+          (parameter
+            (identifier)
+            (type
+              (path
+                (identifier))
+              (type_arguments
+                (type
+                  (path
+                    (identifier)))))))
+        (type
+          (path
+            (identifier)))
+        (block
+          (keyword)
+          (identifier)))))
+  (function_declaration
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)
+        (type
+          (path
+            (identifier))
+          (type_arguments
+            (type
+              (primitive_type))))))
+    (parameters
+      (parameter
+        (identifier)
+        (type
+          (path
+            (identifier)))))
+    (type
+      (primitive_type))
+    (block
+      (identifier)
+      (identifier)
+      (parenthesized))))
+
+==================
+Native parameters and contextual callback name
+==================
+
+extern "C" fn run(callback handler: System.Action<i32>, buffer bytes: u8[]) = "native";
+fn apply(callback: System.Func<i32, i32>, input: i32) -> i32 { callback(input) }
+
+---
+
+(source_file
+  (function_declaration
+    (string)
+    (identifier)
+    (parameters
+      (parameter
+        (passing_mode)
+        (identifier)
+        (type
+          (path
+            (identifier)
+            (identifier))
+          (type_arguments
+            (type
+              (primitive_type)))))
+      (parameter
+        (passing_mode)
+        (identifier)
+        (type
+          (primitive_type))))
+    (string))
+  (function_declaration
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (type
+          (path
+            (identifier)
+            (identifier))
+          (type_arguments
+            (type
+              (primitive_type))
+            (type
+              (primitive_type)))))
+      (parameter
+        (identifier)
+        (type
+          (primitive_type))))
+    (type
+      (primitive_type))
+    (block
+      (identifier)
+      (parenthesized
+        (identifier)))))
+
+==================
+Trailing async lambda and interpolation
+==================
+
+/// A UI test.
+#[test]
+async fn example() {
+    run() async |value| {
+        value.await;
+        $"value: {value}; {{literal}}"
+    };
+}
+
+---
+
+(source_file
+  (doc_comment)
+  (attribute
+    (identifier))
+  (function_declaration
+    (identifier)
+    (parameters)
+    (block
+      (identifier)
+      (parenthesized)
+      (keyword)
+      (operator)
+      (identifier)
+      (operator)
+      (block
+        (identifier)
+        (keyword)
+        (interpolated_string
+          (interpolated_text)
+          (interpolation
+            (identifier))
+          (interpolated_text)
+          (escape)
+          (interpolated_text)
+          (escape))))))

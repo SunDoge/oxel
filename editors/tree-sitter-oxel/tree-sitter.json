@@ -1,0 +1,17 @@
+{
+  "grammars": [
+    {
+      "name": "oxel",
+      "camelcase": "Oxel",
+      "scope": "source.oxel",
+      "path": ".",
+      "file-types": ["oxel"]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "description": "Editor grammar for Oxel",
+    "links": { "repository": "https://github.com/SunDoge/oxel" }
+  }
+}
