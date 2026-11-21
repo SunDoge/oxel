@@ -158,7 +158,7 @@ fn resolve_references(
                 sdk::LockMode::IfPresent
             };
             let sdk = sdk::SdkProject::restore(
-                path,
+                (path, None),
                 &project.name,
                 &project.nuget,
                 false,

@@ -21,6 +21,7 @@ use crate::{
 pub(super) const DEFAULT: &str = "oxel.toml";
 
 pub(super) struct Manifest {
+    pub content_hash: blake3::Hash,
     pub name: String,
     pub kind: AssemblyKind,
     pub sources: Vec<PathBuf>,
@@ -145,6 +146,7 @@ impl Manifest {
             }
         }
         Ok(Self {
+            content_hash: blake3::hash(source.as_bytes()),
             name: package.name.into_inner(),
             kind,
             sources,

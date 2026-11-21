@@ -251,7 +251,7 @@ fn stage_project(project: &Path) -> io::Result<tempfile::TempDir> {
 
 impl SdkProject {
     pub(super) fn restore(
-        manifest: &Path,
+        (manifest, selected): (&Path, Option<&(String, String)>),
         name: &str,
         packages: &BTreeMap<String, String>,
         native: bool,
@@ -260,7 +260,10 @@ impl SdkProject {
         kind: AssemblyKind,
     ) -> SdkResult<Self> {
         let project = manifest::directory(manifest);
-        let (sdk, framework) = version(project)?;
+        let (sdk, framework) = match selected {
+            Some(selection) => selection.clone(),
+            None => version(project)?,
+        };
         // Keep the staging project beneath the manifest to pick up the normal
         // NuGet.Config hierarchy, including project-relative package feeds.
         let stage = stage_project(project)?;
@@ -437,7 +440,7 @@ fn read_references(path: &Path, required: bool) -> io::Result<Vec<PathBuf>> {
     Ok(references)
 }
 
-fn lock_path(manifest: &Path, framework: &str, rid: Option<&str>) -> PathBuf {
+pub(super) fn lock_path(manifest: &Path, framework: &str, rid: Option<&str>) -> PathBuf {
     let mut file = manifest
         .file_name()
         .expect("manifest has a file name")
@@ -465,7 +468,7 @@ pub(super) fn store_directory(root: &Path, output: &Path) -> io::Result<PathBuf>
     }
 }
 
-fn folder_hash(root: &Path) -> io::Result<blake3::Hash> {
+pub(super) fn folder_hash(root: &Path) -> io::Result<blake3::Hash> {
     fn walk(folder: &Path, root: &Path, hash: &mut blake3::Hasher) -> io::Result<()> {
         let mut entries = fs::read_dir(folder)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(fs::DirEntry::file_name);

@@ -170,6 +170,75 @@ fn sdk_resolves_nuget_references_and_packages_runtime_implementations() {
 }
 
 #[test]
+fn locked_runs_reuse_complete_bundles_and_rebuild_after_changes() {
+    let fixture = Fixture::new();
+    let root = fixture.workspace.path();
+    let lock = fixture.artifact(fixture.oxel("restore", None));
+    let cache = root.join("app/target/oxel/run-cache");
+    let record = |entries: &Path| {
+        let entry = fs::read_dir(entries)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let pointer = fs::read_to_string(entry.join("latest")).unwrap();
+        let bundle = entry.join(pointer.lines().next().unwrap()).join("output");
+        (entry, pointer, bundle)
+    };
+    let run = |argument: &str| {
+        let result = fixture.with_flags("run", &["--locked", "--", argument], None);
+        success(result)
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(run("first"), ["30", "first"]);
+    let (entry, pointer, bundle) = record(&cache);
+    assert_eq!(run("again"), ["30", "again"]);
+    assert_eq!(fs::read_to_string(entry.join("latest")).unwrap(), pointer);
+
+    fs::remove_file(bundle.join("Leaf.dll")).unwrap();
+    assert_eq!(run("repaired"), ["30", "repaired"]);
+    let (_, new_pointer, _) = record(&cache);
+    assert_ne!(new_pointer, pointer);
+    assert_eq!(run("reused repair"), ["30", "reused repair"]);
+    assert_eq!(
+        fs::read_to_string(entry.join("latest")).unwrap(),
+        new_pointer
+    );
+
+    let config = root.join("NuGet.Config");
+    let text = fs::read_to_string(&config).unwrap();
+    fs::write(config, format!("{text}\n<!-- feed config edited -->")).unwrap();
+    assert_eq!(run("config edit"), ["30", "config edit"]);
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 2);
+
+    let support = oxel::compile(
+        "fn main() {} fn subtract(a: i32, b: i32) -> i32 { a - b + 1 }",
+        "Support",
+    )
+    .unwrap();
+    fs::write(root.join("app/support.dll"), support).unwrap();
+    assert_eq!(run("reference edit"), ["31", "reference edit"]);
+
+    let source = root.join("app/main.oxel");
+    fs::write(&source, "fn main() { System.Console.WriteLine(42); }").unwrap();
+    assert_eq!(run("source edit"), ["42"]);
+    fs::write(&source, "fn main() { missing(); }").unwrap();
+    let error = fixture.with_flags("run", &["--locked"], None);
+    assert!(!error.status.success());
+    assert!(String::from_utf8(error.stderr).unwrap().contains("E0203"));
+
+    fs::write(&source, "fn main() { System.Console.WriteLine(42); }").unwrap();
+    fs::remove_file(lock).unwrap();
+    let error = fixture.with_flags("run", &["--locked"], None);
+    assert!(!error.status.success());
+    assert!(String::from_utf8(error.stderr).unwrap().contains("E0010"));
+}
+
+#[test]
 fn sdk_copies_runtime_dependencies_for_managed_libraries() {
     let fixture = Fixture::new();
     let root = fixture.workspace.path();

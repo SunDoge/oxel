@@ -7,6 +7,7 @@ mod fmt;
 mod lsp;
 mod manifest;
 mod native_assets;
+mod run_cache;
 mod sdk;
 
 use std::{
@@ -38,6 +39,7 @@ struct Run {
     status: Option<i32>,
     reload: Option<(PathBuf, bool)>,
     debug: bool,
+    cache: Option<run_cache::Cache>,
 }
 
 fn main() -> ExitCode {
@@ -100,6 +102,7 @@ fn cli(run: &mut Run) -> ExitCode {
         sdk::Framework::None
     };
     let mut nuget = Default::default();
+    let mut manifest_hash = None;
     let package = if let Some(path) = &manifest_path {
         let manifest = match manifest::Manifest::load(path, format) {
             Ok(manifest) => manifest,
@@ -109,6 +112,7 @@ fn cli(run: &mut Run) -> ExitCode {
             framework = manifest.framework;
         }
         nuget = manifest.nuget;
+        manifest_hash = Some(manifest.content_hash);
         sources = manifest.sources;
         if matches!(
             action,
@@ -148,6 +152,31 @@ fn cli(run: &mut Run) -> ExitCode {
         );
     }
     let has_framework = framework != sdk::Framework::None;
+    let mut selected_sdk = None;
+    if matches!(action, Action::Run)
+        && !nuget.is_empty()
+        && let Some((package, manifest_hash)) = package.zip(manifest_hash)
+    {
+        selected_sdk = sdk::version(manifest::directory(package.manifest)).ok();
+        if let Some(selection) = &selected_sdk {
+            let inputs = run_cache::Inputs {
+                package,
+                manifest_hash,
+                sources: &sources,
+                references: &references,
+                framework,
+                debug,
+            };
+            run.cache = run_cache::Cache::prepare(inputs, selection);
+            if let Some(dll) = run
+                .cache
+                .as_ref()
+                .and_then(|cache| cache.lookup(package.name))
+            {
+                return run_dll(package.manifest, &dll, format, run);
+            }
+        }
+    }
     let restored = if has_framework || !nuget.is_empty() {
         let lock_mode = if locked {
             sdk::LockMode::Required
@@ -192,7 +221,7 @@ fn cli(run: &mut Run) -> ExitCode {
         let resolution = resolution.map_or_else(
             || {
                 sdk::SdkProject::restore(
-                    path,
+                    (path, selected_sdk.as_ref()),
                     name,
                     &nuget,
                     native,
@@ -388,9 +417,15 @@ fn execute(
         }
         match action {
             Action::Run | Action::Test { .. } => {
+                let bundle = application
+                    .cache
+                    .as_ref()
+                    .filter(|cache| restored.lock.as_deref() == Some(cache.lock()))
+                    .and_then(|cache| cache.publish(&output))
+                    .unwrap_or(output);
                 return run_dll(
                     origin,
-                    &output.join(format!("{name}.dll")),
+                    &bundle.join(format!("{name}.dll")),
                     format,
                     application,
                 );

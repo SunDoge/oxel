@@ -252,7 +252,9 @@ oxel run --manifest-path examples/nuget/oxel.toml
 
 Projects with NuGet dependencies use the .NET SDK selected from the manifest directory and its `NuGet.Config` settings. The SDK restores transitive dependencies and selects compile-time and runtime assets for its target framework. The compiler reads compile-time assemblies as CLR metadata. `compile` and `run` package SDK-selected implementation assemblies, `.deps.json` and runtime configuration alongside the oxel DLL. `publish` selects the host Native AOT target and uses the restored SDK graph. Package APIs are subject to oxel's CLR interoperability support and Native AOT constraints. [NuGet PackageReference](https://learn.microsoft.com/en-us/nuget/consume-packages/package-references-in-project-files)
 
-NuGet restore runs for commands using a manifest with package declarations, including `check` and LSP startup. The SDK reuses its package cache. Transitive versions are resolved at restore time when no lock file is selected. Local assembly references and single-file compilation continue to work without a .NET SDK. [Runnable NuGet example](examples/nuget/oxel.toml)
+NuGet projects use the SDK package cache when restoring dependencies, including during `check` and LSP startup. Transitive versions are resolved at restore time when no lock file is selected. Local assembly references and single-file compilation continue to work without a .NET SDK. [Runnable NuGet example](examples/nuget/oxel.toml)
+
+When the selected SDK's NuGet lock file exists, `oxel run` can reuse a complete executable bundle under `target/oxel/run-cache`. Unchanged builds skip restore, compilation and SDK packaging. Changes to the manifest, lock, sources, local CLR or native libraries, compiler, SDK selection, build environment or NuGet configuration cause a rebuild. Runtime arguments can change between cached runs. Keep the application bundle read-only and use an application data directory for writable files. Remove `target/oxel/run-cache` when no scripts are running to reclaim cached bundles.
 
 ### NuGet lock files
 
