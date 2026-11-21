@@ -25,6 +25,8 @@ trap 'rm -r -- "$stage"' EXIT
 mkdir "$stage/$bundle" "$stage/extracted" "$stage/smoke"
 install -m 755 "$target_directory/$target/release/oxel" "$stage/$bundle/oxel"
 install -m 644 LICENSE README.md CHANGELOG.md "$stage/$bundle/"
+mkdir "$stage/$bundle/docs"
+install -m 644 docs/*.md "$stage/$bundle/docs/"
 tar -C "$stage" --sort=name --owner=0 --group=0 --numeric-owner \
     --mtime="$(git show -s --format=%cI HEAD)" -cf - "$bundle" |
     gzip -n > "$stage/$bundle.tar.gz"
