@@ -82,6 +82,7 @@ fn publishes_and_runs_native_executable_with_managed_dependency() {
     let publish = || {
         let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
             .current_dir(folder.path())
+            .env("DOTNET_CLI_UI_LANGUAGE", "en-US")
             .args(["publish", "--manifest-path", "package/oxel.toml"])
             .output()
             .unwrap();
@@ -122,7 +123,9 @@ fn publishes_and_runs_native_executable_with_managed_dependency() {
         );
     };
 
-    publish();
+    let ran_restore =
+        |log: &[u8]| String::from_utf8_lossy(log).contains("Determining projects to restore");
+    assert!(ran_restore(&publish()));
     assert_eq!(fs::read_dir(binary.parent().unwrap()).unwrap().count(), 1);
     execute("30");
 
@@ -135,7 +138,9 @@ fn publishes_and_runs_native_executable_with_managed_dependency() {
         declarations.replace("step(2)", "step(3)"),
     )
     .unwrap();
-    publish();
+    let log = publish();
+    assert!(!log.is_empty());
+    assert!(!ran_restore(&log), "{}", String::from_utf8_lossy(&log));
     execute("45");
 
     fs::write(&binary, b"damaged").unwrap();
@@ -155,4 +160,15 @@ fn publishes_and_runs_native_executable_with_managed_dependency() {
     assert!(!publish().is_empty());
     assert_ne!(fs::read(&staged_binary).unwrap(), b"damaged");
     execute("45");
+
+    let assets = stage.join("obj/project.assets.json");
+    fs::remove_file(&assets).unwrap();
+    fs::write(
+        project.join(types),
+        declarations.replace("step(2)", "step(4)"),
+    )
+    .unwrap();
+    assert!(ran_restore(&publish()));
+    assert!(assets.is_file());
+    execute("60");
 }

@@ -211,7 +211,7 @@ pub(super) fn publish(
     let output = directory.join("publish");
     if let Some(cache) = &cache {
         cache.build(&output, bytes, dependencies, true, || {
-            sdk_publish(directory)
+            publish_with_cached_restore(directory, &output)
         })?;
     } else {
         fs::write(directory.join("input.dll"), bytes)?;
@@ -263,19 +263,7 @@ fn standalone_cache_compatible(project: &Path) -> io::Result<bool> {
 }
 
 fn sdk_publish(directory: &Path) -> PublishResult<()> {
-    let mut child = Command::new("dotnet")
-        .current_dir(directory)
-        .args([
-            "publish",
-            "oxel.csproj",
-            "-c",
-            "Release",
-            "-o",
-            "publish",
-            "--nologo",
-            "-v",
-            "minimal",
-        ])
+    let mut child = sdk_publish_command(directory)
         .stdout(Stdio::piped())
         .spawn()?;
     let log = io::copy(
@@ -289,6 +277,78 @@ fn sdk_publish(directory: &Path) -> PublishResult<()> {
     }
 
     Ok(())
+}
+
+fn publish_with_cached_restore(directory: &Path, output: &Path) -> PublishResult<()> {
+    let stamp = directory.join("restored");
+    if let Ok(previous) = fs::read_to_string(&stamp)
+        && let Some(current) = restore_digest(directory)
+        && current.to_hex().as_str() == previous
+    {
+        // The staged project has only SDK-owned packages. A failed fast build
+        // can still indicate missing pack files, so retry with normal restore.
+        if let Ok(result) = sdk_publish_command(directory).arg("--no-restore").output()
+            && result.status.success()
+        {
+            use io::Write as _;
+            let mut log = io::stderr().lock();
+            log.write_all(&result.stdout)?;
+            log.write_all(&result.stderr)?;
+            return Ok(());
+        }
+        remove_if_present(fs::remove_dir_all(output))?;
+    }
+    remove_if_present(fs::remove_file(&stamp))?;
+    sdk_publish(directory)?;
+    if let Some(digest) = restore_digest(directory) {
+        let _ = write_file(&stamp, digest.to_hex().as_bytes());
+    }
+    Ok(())
+}
+
+fn restore_digest(directory: &Path) -> Option<blake3::Hash> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NuGetCache {
+        success: bool,
+        expected_package_files: Vec<PathBuf>,
+    }
+
+    let obj = directory.join("obj");
+    let cache = fs::read(obj.join("project.nuget.cache")).ok()?;
+    let restored: NuGetCache = serde_json::from_slice(&cache).ok()?;
+    if !restored.success {
+        return None;
+    }
+    let mut hash = blake3::Hasher::new_derive_key("oxel standalone native restore");
+    field(&mut hash, &cache);
+    for file in [
+        "project.assets.json",
+        "oxel.csproj.nuget.g.props",
+        "oxel.csproj.nuget.g.targets",
+    ] {
+        hash_file(&mut hash, &obj.join(file)).ok()?;
+    }
+    for file in restored.expected_package_files {
+        hash_file(&mut hash, &file).ok()?;
+    }
+    Some(hash.finalize())
+}
+
+fn sdk_publish_command(directory: &Path) -> Command {
+    let mut command = Command::new("dotnet");
+    command.current_dir(directory).args([
+        "publish",
+        "oxel.csproj",
+        "-c",
+        "Release",
+        "-o",
+        "publish",
+        "--nologo",
+        "-v",
+        "minimal",
+    ]);
+    command
 }
 
 pub(super) fn install(

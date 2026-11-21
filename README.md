@@ -896,7 +896,7 @@ When the SDK publishes companion runtime files, oxel places the executable and i
 
 The SDK consumes oxel's managed assembly directly. Use repeatable `--reference` flags for managed implementation DLLs. Referenced code must support Native AOT and trimming. SDK failures go to standard error so scripts can read the executable path from standard output.
 
-Repeated publishing can reuse SDK intermediates under `target/oxel/aot-cache/`. For projects without NuGet package dependencies, unchanged managed assemblies and publish settings can also reuse the verified native output directly. NuGet-backed projects still run the SDK's restore and publish targets. Delete `target/oxel/aot-cache/` to force a fresh native build.
+Repeated publishing can reuse SDK intermediates under `target/oxel/aot-cache/`. For standalone projects, a source edit can reuse the verified SDK restore if the SDK package markers and restore files still match. Unchanged managed assemblies and publish settings can also reuse the verified native output directly for projects without NuGet package dependencies. NuGet-backed projects still run the SDK's restore and publish targets. Delete `target/oxel/aot-cache/` to force a fresh native build.
 
 ## Editor support
 
