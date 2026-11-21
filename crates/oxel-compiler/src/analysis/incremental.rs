@@ -20,6 +20,7 @@ struct Parsed<'src> {
     diagnostics: Vec<Diagnostic>,
     types: Vec<TypeInput<'src>>,
     functions: Vec<FunctionInput<'src>>,
+    implementation_bodies: Vec<(usize, blake3::Hash)>,
     constant_sources: Vec<(&'src str, blake3::Hash)>,
     interface: blake3::Hash,
 }
@@ -48,6 +49,9 @@ impl<'src> Parsed<'src> {
                 }
                 syntax::TypeShape::Union(variants) => {
                     definitions.extend(variants.iter().map(|variant| variant.span));
+                }
+                syntax::TypeShape::Interface(methods) => {
+                    definitions.extend(methods.iter().map(|method| method.name_span));
                 }
             }
             let mut dependencies = Vec::new();
@@ -86,11 +90,24 @@ impl<'src> Parsed<'src> {
         for (_, hash) in &constant_sources {
             interface.update(hash.as_bytes());
         }
+        interface.update(&(file.implementations.len() as u64).to_le_bytes());
+        let mut implementation_bodies = Vec::new();
+        for implementation in &file.implementations {
+            shape::implementation(&mut interface, implementation);
+            implementation_bodies.extend(implementation.methods.iter().map(|method| {
+                let span = method.declaration_span;
+                (
+                    method.name_span.start,
+                    blake3::hash(text(span.start, span.end)),
+                )
+            }));
+        }
         Self {
             file,
             diagnostics,
             types,
             functions,
+            implementation_bodies,
             constant_sources,
             interface: interface.finalize(),
         }
@@ -173,6 +190,11 @@ impl<'refs> ProjectCompiler<'refs> {
             .flat_map(|source| source.file.functions.iter().zip(&source.functions))
             .filter(|(function, _)| !function.comptime && function.test.is_none())
             .map(|(function, input)| (function.name_span.start, input.body))
+            .chain(
+                parsed
+                    .clone()
+                    .flat_map(|source| source.implementation_bodies.iter().copied()),
+            )
             .collect();
         let module = syntax::Module::new(parsed.map(|source| &source.file));
         let program = hir::lower_cached(module, self.references, self.kind, &mut self.cache, &keys)
@@ -233,7 +255,14 @@ impl ProjectAnalyzer {
         let parsed = self.files.parsed();
         let diagnostics = diagnostics(parsed.clone());
         let scoped = parsed.clone().any(|source| {
-            source.file.scope.namespace.is_some() || !source.file.scope.imports.is_empty()
+            source.file.scope.namespace.is_some()
+                || !source.file.scope.imports.is_empty()
+                || !source.file.implementations.is_empty()
+                || source
+                    .file
+                    .types
+                    .iter()
+                    .any(|item| matches!(item.shape, syntax::TypeShape::Interface(_)))
         });
         // Declaration and dependency cache keys in flat projects are unqualified.
         // Scoped projects still reuse parsed files and rebind their names.

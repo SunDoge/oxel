@@ -51,6 +51,7 @@ fn verifies_managed_assemblies_with_ilverify() {
         ("delegate_calls.oxel", true),
         ("generic_lambdas.oxel", true),
         ("alias_interfaces.oxel", true),
+        ("interfaces.oxel", false),
         ("mutable_captures.oxel", true),
         ("byref_arguments.oxel", true),
         ("slices.oxel", true),

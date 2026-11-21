@@ -74,6 +74,8 @@ define_types! {
         NullableString,
         NullableObject,
         NullableExternal(usize),
+        Interface(usize),
+        NullableInterface(usize),
         Null,
         Struct(usize),
         ClrEnum(usize),

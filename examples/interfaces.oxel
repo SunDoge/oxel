@@ -1,0 +1,50 @@
+interface Read<T> {
+    fn read() -> T;
+    fn offset(by: i32) -> T;
+}
+
+struct Counter {
+    value: i32,
+}
+
+impl Read<i32> for Counter {
+    fn read(self: Counter) -> i32 {
+        self.value
+    }
+
+    fn offset(self: Counter, by: i32) -> i32 {
+        self.value + by
+    }
+}
+
+struct Cell<T> {
+    value: T,
+}
+
+impl<T> Read<T> for Cell<T> {
+    fn read(self: Cell<T>) -> T {
+        self.value
+    }
+
+    fn offset(self: Cell<T>, by: i32) -> T {
+        self.value
+    }
+}
+
+fn read<T>(source: Read<T>) -> T {
+    source.read()
+}
+
+fn offset<T: Read<i32>>(source: T, by: i32) -> i32 {
+    source.offset(by)
+}
+
+fn main() {
+    let counter = Counter { value: 30 };
+    let reader: Read<i32> = counter;
+    System.Console.WriteLine(reader.read());
+    System.Console.WriteLine(read(counter));
+    System.Console.WriteLine(offset(counter, 12));
+    System.Console.WriteLine(counter.offset(13));
+    System.Console.WriteLine(read(Cell::<string> { value: "oxel" }));
+}

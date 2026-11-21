@@ -9,6 +9,7 @@ mod entry;
 mod hierarchy;
 mod indexers;
 mod inference;
+mod interfaces;
 mod iteration;
 mod lambdas;
 mod namespaces;
@@ -34,6 +35,9 @@ pub(crate) use constants::EvaluationCache;
 use hierarchy::DataMember;
 pub(crate) use hierarchy::Member;
 pub(crate) use indexers::IndexUpdate;
+pub(crate) use interfaces::{
+    Declaration as InterfaceDeclaration, InterfaceImplementation, InterfaceMember, InterfaceMethod,
+};
 use iteration::local_interface_call;
 use namespaces::{Scopes, path_name};
 pub(crate) use native::NativeCallback;
@@ -146,6 +150,7 @@ impl Type {
                 | Self::String
                 | Self::External(_)
                 | Self::ConstructedExternal(_)
+                | Self::Interface(_)
                 | Self::Array(_)
                 | Self::Null
         ) || self.is_nullable()
@@ -157,6 +162,8 @@ impl Type {
             | Self::ConstructedClrStruct(id)
             | Self::ConstructedExternal(id)
             | Self::NullableConstructedExternal(id)
+            | Self::Interface(id)
+            | Self::NullableInterface(id)
             | Self::Array(id)
             | Self::NullableArray(id) => Some(id),
             _ => None,
@@ -181,6 +188,8 @@ impl fmt::Display for Type {
             Self::NullableString => "System.String?",
             Self::NullableObject => "System.Object?",
             Self::NullableExternal(id) => return write!(out, "CLR reference type #{id}?"),
+            Self::Interface(id) => return write!(out, "interface #{id}"),
+            Self::NullableInterface(id) => return write!(out, "interface #{id}?"),
             Self::Null => "null",
             Self::Struct(id) => return write!(out, "struct #{id}"),
             Self::ClrEnum(id) => return write!(out, "CLR enum #{id}"),
@@ -229,6 +238,7 @@ pub(crate) struct Program<'src> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum InstanceKind {
     Struct(usize),
+    Interface(usize),
     External(usize),
     Array,
 }
@@ -256,7 +266,9 @@ pub(crate) struct Struct<'src> {
     pub type_parameters: Vec<&'src str>,
     pub bounds: Vec<GenericBound>,
     pub union: Option<unions::Union<'src>>,
-    span: Span,
+    pub interface: Option<Vec<InterfaceMethod<'src>>>,
+    pub implementations: Vec<InterfaceImplementation>,
+    pub span: Span,
     field_ids: HashMap<&'src str, usize>,
 }
 
@@ -289,6 +301,7 @@ struct Structs<'src, 'refs> {
     scopes: Scopes<'src>,
     definitions: Vec<Struct<'src>>,
     arities: Vec<usize>,
+    interface_types: Vec<bool>,
     instances: Arc<RwLock<TypeInstances>>,
     layouts_ready: bool,
     deferred_constructor_checks: AtomicBool,
@@ -301,6 +314,7 @@ struct Structs<'src, 'refs> {
 impl<'src, 'refs> Structs<'src, 'refs> {
     fn collect(
         declarations: &[&syntax::TypeDefinition<'src>],
+        implementations: &[&syntax::Implementation<'src>],
         references: &'refs References,
         scopes: Scopes<'src>,
         instances: Arc<RwLock<TypeInstances>>,
@@ -342,6 +356,10 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 .chain(builtin_option.then_some(1))
                 .chain(std::iter::once(0))
                 .collect(),
+            interface_types: declarations
+                .iter()
+                .map(|item| matches!(item.shape, syntax::TypeShape::Interface(_)))
+                .collect(),
             instances,
             layouts_ready: false,
             deferred_constructor_checks: AtomicBool::new(false),
@@ -366,6 +384,8 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 span: declaration.span,
                 fields: Vec::new(),
                 union: None,
+                interface: None,
+                implementations: Vec::new(),
                 type_parameters: declaration
                     .type_parameters
                     .iter()
@@ -379,6 +399,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             types.definitions.push(unions::builtin_option());
         }
         types.definitions.push(constants::builtin_field_info());
+        types.declare_implementations(implementations)?;
         for (id, declaration) in declarations.iter().enumerate() {
             let bounds = &types.definitions[id].bounds;
             bounds::validate_arguments(
@@ -428,6 +449,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                     bounds,
                     &mut fields,
                 )?),
+                syntax::TypeShape::Interface(_) => None,
             };
             let definition = &mut types.definitions[id];
             definition.fields = fields;
@@ -463,14 +485,21 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                             check(annotation)?;
                         }
                     }
+                    syntax::TypeShape::Interface(_) => {}
                 }
+            }
+        }
+        for (id, declaration) in declarations.iter().enumerate() {
+            if let syntax::TypeShape::Interface(methods) = &declaration.shape {
+                types.definitions[id].interface =
+                    Some(types.interface_methods(declaration, methods, id)?);
             }
         }
         Ok(types)
     }
 
     fn require_public_type(&self, ty: Type, span: Span) -> Checked<()> {
-        if let Some(id) = self.definition_of(ty)
+        if let Some(id) = self.definition_of(ty).or_else(|| self.interface_id(ty))
             && let definition = &self.definitions[id]
             && definition.internal
         {
@@ -660,7 +689,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
     }
 
     fn constructed(&self, definition: usize, arguments: Vec<Type>, span: Span) -> Checked<Type> {
-        self.constructed_type(InstanceKind::Struct(definition), arguments, span)
+        let kind = if self.interface_types.get(definition) == Some(&true) {
+            InstanceKind::Interface(definition)
+        } else {
+            InstanceKind::Struct(definition)
+        };
+        self.constructed_type(kind, arguments, span)
     }
 
     fn constructed_type(
@@ -673,7 +707,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         if arguments.iter().any(|&ty| self.stack_only(ty)) {
             return Err(stack_only_error(span, "a generic or array element type"));
         }
-        if arguments.is_empty() {
+        if arguments.is_empty() && !matches!(kind, InstanceKind::Interface(_)) {
             return Ok(match kind {
                 InstanceKind::External(definition) if external_value => self
                     .references
@@ -683,7 +717,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                     .unwrap_or(Type::ClrStruct(definition)),
                 InstanceKind::External(definition) => Type::External(definition),
                 InstanceKind::Struct(definition) => Type::Struct(definition),
-                InstanceKind::Array => unreachable!("array element type"),
+                InstanceKind::Array | InstanceKind::Interface(_) => unreachable!("interned type"),
             });
         }
         let pool = self.instances.read().expect("type interner");
@@ -739,6 +773,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             InstanceKind::External(_) if external_value => Type::ConstructedClrStruct(id),
             InstanceKind::External(_) => Type::ConstructedExternal(id),
             InstanceKind::Struct(_) => Type::ConstructedStruct(id),
+            InstanceKind::Interface(_) => Type::Interface(id),
             InstanceKind::Array => Type::Array(id),
         })
     }
@@ -775,6 +810,8 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             | Type::ConstructedClrStruct(id)
             | Type::ConstructedExternal(id)
             | Type::NullableConstructedExternal(id)
+            | Type::Interface(id)
+            | Type::NullableInterface(id)
             | Type::Array(id)
             | Type::NullableArray(id) => {
                 let instance = self.instance(id);
@@ -1270,6 +1307,10 @@ pub(crate) enum Target {
     WriteErrorLine,
     AssertionException,
     DefaultConstructor(Type),
+    Interface {
+        member: InterfaceMember,
+        constrained: Option<Type>,
+    },
     External {
         method: usize,
         arguments: Box<[Type]>,
@@ -1659,9 +1700,16 @@ fn prepare<'ast, 'src, 'refs>(
     instances: Arc<RwLock<TypeInstances>>,
 ) -> Result<ModuleScope<'ast, 'src, 'refs>, Vec<Diagnostic>> {
     let scopes = Scopes::new(&file.scopes).map_err(|error| vec![error])?;
-    let types = Structs::collect(&file.types, references, scopes, instances)
-        .map_err(|error| vec![error])?;
+    let mut types = Structs::collect(
+        &file.types,
+        &file.implementations,
+        references,
+        scopes,
+        instances,
+    )
+    .map_err(|error| vec![error])?;
     let mut functions = file.functions;
+    functions.extend(file.implementations.iter().flat_map(|item| &item.methods));
     // Runtime method IDs stay dense even though comptime functions share the
     // module namespace and type checker.
     functions.sort_by_key(|function| function.comptime);
@@ -1669,12 +1717,13 @@ fn prepare<'ast, 'src, 'refs>(
     let mut signatures = Vec::new();
     let mut errors = Vec::new();
     for (index, function) in functions.iter().enumerate() {
-        if names
-            .insert(
-                types.scopes.declaration(function.name, function.name_span),
-                index,
-            )
-            .is_some()
+        if !function.implementation
+            && names
+                .insert(
+                    types.scopes.declaration(function.name, function.name_span),
+                    index,
+                )
+                .is_some()
         {
             errors.push(Diagnostic::new(
                 "E0201",
@@ -1744,10 +1793,13 @@ fn prepare<'ast, 'src, 'refs>(
         errors.sort_by_key(|error| error.span.start);
         return Err(errors);
     }
+    types
+        .bind_implementations(&file.implementations, &functions, &signatures)
+        .map_err(|error| vec![error])?;
     let mut mains = functions
         .iter()
         .enumerate()
-        .filter(|(_, function)| function.name == "main");
+        .filter(|(_, function)| !function.implementation && function.name == "main");
     let main = mains.next().map(|(index, _)| index);
     if !matches!(entry_point, EntryPoint::None)
         && let Some((_, duplicate)) = mains.next()
@@ -1800,7 +1852,9 @@ fn prepare<'ast, 'src, 'refs>(
         for (definition, declaration) in types.definitions.iter().zip(&file.types) {
             occurrences.push(Occurrence {
                 span: definition.span,
-                kind: if definition.union.is_some() {
+                kind: if definition.interface.is_some() {
+                    OccurrenceKind::Interface
+                } else if definition.union.is_some() {
                     OccurrenceKind::Enum
                 } else {
                     OccurrenceKind::Struct
@@ -1811,7 +1865,9 @@ fn prepare<'ast, 'src, 'refs>(
                 detail: format!(
                     "{}{} {}{}",
                     if definition.internal { "internal " } else { "" },
-                    if definition.union.is_some() {
+                    if definition.interface.is_some() {
+                        "interface"
+                    } else if definition.union.is_some() {
                         "enum"
                     } else {
                         "struct"
@@ -1871,6 +1927,7 @@ fn prepare<'ast, 'src, 'refs>(
                     );
                     continue;
                 }
+                syntax::TypeShape::Interface(_) => continue,
             };
             for (field, (_, _, annotation)) in definition.fields.iter().zip(fields) {
                 occurrences.push(Occurrence {
@@ -2079,7 +2136,11 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             namespace: types.scopes.namespace(function.name_span).map(Into::into),
             has_exception_regions: checker.has_exception_regions,
             internal: function.internal,
-            name: function.name.into(),
+            name: if function.implementation {
+                format!("<interface_impl_{index}>").into()
+            } else {
+                function.name.into()
+            },
             span: function.name_span,
             signature: signature.clone(),
             parameter_names: function
@@ -2300,7 +2361,9 @@ fn describe_scoped(types: &Structs<'_, '_>, type_parameters: &[(&str, Span)], ty
         Type::ConstructedStruct(id)
         | Type::ConstructedClrStruct(id)
         | Type::ConstructedExternal(id)
-        | Type::NullableConstructedExternal(id) => {
+        | Type::NullableConstructedExternal(id)
+        | Type::Interface(id)
+        | Type::NullableInterface(id) => {
             let instance = types.instance(id);
             let arguments = instance
                 .arguments
@@ -2314,11 +2377,17 @@ fn describe_scoped(types: &Structs<'_, '_>, type_parameters: &[(&str, Span)], ty
                     name.rsplit_once('`')
                         .map_or(name.as_str(), |(name, _)| name)
                 }
-                InstanceKind::Struct(id) => types.source_type_name(id),
+                InstanceKind::Struct(id) | InstanceKind::Interface(id) => {
+                    types.source_type_name(id)
+                }
                 InstanceKind::Array => unreachable!("constructed non-array type"),
             };
             let nullable = if ty.is_nullable() { "?" } else { "" };
-            format!("{name}<{arguments}>{nullable}")
+            if instance.arguments.is_empty() {
+                format!("{name}{nullable}")
+            } else {
+                format!("{name}<{arguments}>{nullable}")
+            }
         }
         Type::External(id) | Type::ClrEnum(id) | Type::ClrStruct(id) => {
             types.references.imported_type(id).qualified_name.clone()
@@ -2351,7 +2420,13 @@ fn observe_type(
             OccurrenceKind::TypeParameter,
         ),
         ty => {
-            if let Some(id) = types.definition_of(ty) {
+            if let Some(id) = types.interface_id(ty) {
+                let definition = &types.definitions[id];
+                (
+                    definition.source_span(definition.span),
+                    OccurrenceKind::Interface,
+                )
+            } else if let Some(id) = types.definition_of(ty) {
                 let definition = &types.definitions[id];
                 let kind = if definition.union.is_some() {
                     OccurrenceKind::Enum
@@ -2379,7 +2454,8 @@ fn observe_type(
     );
     if let Type::ConstructedStruct(id)
     | Type::ConstructedExternal(id)
-    | Type::ConstructedClrStruct(id) = element_type.non_nullable()
+    | Type::ConstructedClrStruct(id)
+    | Type::Interface(id) = element_type.non_nullable()
     {
         let instance = types.instance(id);
         for (path, &arg) in path.type_arguments.iter().zip(instance.arguments.iter()) {
@@ -2464,7 +2540,7 @@ pub fn clr_function_signatures(name: &str, references: &References) -> Vec<Calla
     if candidates.is_empty() {
         return Vec::new();
     }
-    let types = Structs::collect(&[], references, Scopes::default(), Arc::default())
+    let types = Structs::collect(&[], &[], references, Scopes::default(), Arc::default())
         .expect("no source types");
     candidates
         .iter()
@@ -4099,6 +4175,12 @@ impl<'a, 'src> Checker<'a, 'src> {
             .ok_or_else(|| Diagnostic::new("E0202", span, format!("unknown struct '{name}'")))?;
         let types = self.types;
         let definition = &types.definitions[id];
+        if definition.interface.is_some() {
+            return Err(interfaces::interface_error(
+                span,
+                "interfaces cannot be constructed",
+            ));
+        }
         if definition.union.is_some() {
             return Err(Diagnostic::new(
                 "E0330",
@@ -5355,9 +5437,35 @@ impl<'a, 'src> Checker<'a, 'src> {
             .references
             .builtin_receiver(receiver.ty)
             .map_or(receiver.ty, Type::External);
-        let candidates = self.bound_members(lookup, |owner| {
+        let mut candidates = self.bound_members(lookup, |owner| {
             self.types.instance_candidates(owner, method)
         });
+        for implemented in self.types.local_interfaces(receiver.ty) {
+            for member in self.types.instance_candidates(implemented, method) {
+                if !candidates.contains(&member) {
+                    candidates.push(member);
+                }
+            }
+        }
+        let source = self.source_interface_members(receiver.ty, method);
+        match source.as_slice() {
+            [member] if candidates.is_empty() => {
+                return self.call_source_interface(receiver, *member, span, type_arguments, args);
+            }
+            [] if matches!(receiver.ty, Type::Interface(_)) => {
+                return Err(interfaces::interface_error(
+                    span,
+                    format!("interface '{owner}' has no method '{method}'"),
+                ));
+            }
+            [] => {}
+            _ => {
+                return Err(interfaces::interface_error(
+                    span,
+                    format!("ambiguous interface method '{method}'; choose an interface receiver"),
+                ));
+            }
+        }
         let (target, args, result) =
             self.external_call(&name, span, &candidates, type_arguments, args, None)?;
         self.call_clr_instance(receiver, target, args, result, span)
@@ -5373,7 +5481,10 @@ impl<'a, 'src> Checker<'a, 'src> {
     ) -> Checked<(ExprKind, Type)> {
         if receiver.ty.scalar()
             || receiver.ty.imported_value()
-            || matches!(receiver.ty, Type::MethodParameter(_))
+            || matches!(
+                receiver.ty,
+                Type::MethodParameter(_) | Type::Struct(_) | Type::ConstructedStruct(_)
+            )
         {
             let Target::External {
                 method,

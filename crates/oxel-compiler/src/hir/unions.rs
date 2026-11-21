@@ -33,6 +33,8 @@ pub(super) fn builtin_option() -> Struct<'static> {
         internal: false,
         name: "Option",
         builtin: true,
+        interface: None,
+        implementations: Vec::new(),
         fields: vec![
             Field {
                 name: Cow::Borrowed("$tag"),

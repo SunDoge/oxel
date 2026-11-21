@@ -106,6 +106,7 @@ impl Token {
             SymbolKind::Function => (SemanticTokenType::FUNCTION, 0),
             SymbolKind::Constant => (SemanticTokenType::VARIABLE, READONLY),
             SymbolKind::Struct => (SemanticTokenType::STRUCT, 0),
+            SymbolKind::Interface => (SemanticTokenType::INTERFACE, 0),
             SymbolKind::Enum => (SemanticTokenType::ENUM, 0),
             SymbolKind::EnumMember => (SemanticTokenType::ENUM_MEMBER, 0),
             SymbolKind::Field => (SemanticTokenType::PROPERTY, READONLY),

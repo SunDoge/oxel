@@ -503,7 +503,7 @@ fn read<T: Samples.Interop.IReadable>(value: T) -> i32 {
 }
 ```
 
-A method type parameter can name one imported CLR base class and any number of imported interfaces, separated by `+`. The compiler checks these bounds for inferred and explicit calls, including calls that forward a type parameter. Bound members are available inside the method, and a value of the type parameter can be passed as one of its bound types. Class-bound members take precedence over interface-bound members with the same name.
+A method type parameter can name one imported CLR base class and any number of interfaces, separated by `+`. The compiler checks these bounds for inferred and explicit calls, including calls that forward a type parameter. Bound members are available inside the method, and a value of the type parameter can be passed as one of its bound types. Class-bound members take precedence over imported interface members with the same name. Use a binding with an explicit interface type to select among competing interface methods.
 
 Bounds can name constructed types and refer to the function's type parameters. For example, `fn compare<T: Library.ICompare<T>>(first: T, second: T) -> i32 { first.Compare(second) }` calls the imported interface through its CLR generic constraint. The CLR signature preserves the constructed bound for C# and other callers.
 
@@ -514,6 +514,38 @@ Type parameters can constrain one another. For example, `fn widen<U, T: U>(value
 Use `T: class` to require a reference type and `T: struct` for a non-nullable value type. Use `T: new()` to call `new T()`. Combine the requirements with `T: struct + new()`. Oxel checks that an Oxel-defined type can safely be zero-initialized before accepting it for a `new()` constraint, including explicit `new()` constraints on imported APIs. A CLR value type with an explicit parameterless constructor runs that constructor through the CLR's generic constructor helper. CLR callers and imported APIs continue to follow CLR metadata constraints. [CLR generic parameter constraints](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters) · [CLR generic construction](https://learn.microsoft.com/en-us/dotnet/api/system.activator.createinstance)
 
 The compiler writes CLR generic constraint metadata and uses constrained instance dispatch. C# callers can instantiate an interface-constrained oxel method with a value type that implements the interface. [ECMA-335 generic parameter constraints](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
+
+### Interfaces
+
+Declare a behavioral contract with `interface` and attach it to a source struct with `impl`. Each implementation method has a read-only first parameter `self` of the implementing struct type. The remaining parameters and the result match the interface declaration.
+
+```rust
+interface Read<T> {
+    fn read() -> T;
+}
+
+struct Cell<T> {
+    value: T,
+}
+
+impl<T> Read<T> for Cell<T> {
+    fn read(self: Cell<T>) -> T {
+        self.value
+    }
+}
+
+fn get<T>(reader: Read<T>) -> T {
+    reader.read()
+}
+
+fn get_number<T: Read<i32>>(reader: T) -> i32 {
+    reader.read()
+}
+```
+
+Use an interface in a function signature, struct field, or generic argument. For an interface with type arguments, Oxel can infer those arguments from a struct's implementation. Passing a struct as an interface boxes it. A call through a generic constraint uses CLR constrained dispatch and keeps a struct value unboxed. With a constrained generic struct, repeat its type bounds on the `impl` block. [Runnable example](examples/interfaces.oxel) · [CLR struct dispatch](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/structs)
+
+Oxel emits standard CLR interface metadata, so C# can implement an exported interface, call an Oxel implementation through it, and call generic Oxel functions with the same interface constraint. Oxel structs can also implement CLR interfaces with supported methods, such as `System.IDisposable` and `System.IComparable<i32>`. Source interfaces currently declare methods with distinct names. Source interface inheritance, default methods, and method-specific type parameters are outside this subset. Implementing a CLR interface with base interfaces, static abstract members, generic methods, or by-reference parameters is also outside the supported subset. [C# interfaces](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/interfaces)
 
 Build the [interop library](examples/interop/Bridge.csproj) to run the [constraints example](examples/interop/constraints.oxel).
 

@@ -1,5 +1,6 @@
 //! Packages CIL and CLR metadata in a portable, framework-dependent DLL.
 
+mod interfaces;
 mod native;
 
 use std::collections::HashMap;
@@ -11,8 +12,9 @@ use clrmeta::{
     tables::{
         AssemblyRefRow, AssemblyRow, CodedIndex, CodedIndexKind, CustomAttributeRow,
         FieldMarshalRow, FieldRow, GenericParamConstraintRow, GenericParamRow, ImplMapRow,
-        MemberRefRow, MethodDefRow, MethodSpecRow, ModuleRefRow, ModuleRow, ParamRow,
-        StandAloneSigRow, TableId, TablesHeader, TypeDefRow, TypeRefRow, TypeSpecRow,
+        InterfaceImplRow, MemberRefRow, MethodDefRow, MethodImplRow, MethodSpecRow, ModuleRefRow,
+        ModuleRow, ParamRow, StandAloneSigRow, TableId, TablesHeader, TypeDefRow, TypeRefRow,
+        TypeSpecRow,
     },
     writer::Writer,
 };
@@ -28,7 +30,10 @@ use super::{
 use crate::{
     ArgumentMode, AssemblyKind, Diagnostic, References, Span, TestOptions,
     clr::{Assembly, BUILTIN_ASSEMBLIES, Invocation, TypeBoundKind, builtin_assembly},
-    hir::{GenericBound, InstanceKind, MethodBody, Program, Signature, Struct, Type, TypeInstance},
+    hir::{
+        GenericBound, InstanceKind, InterfaceDeclaration, InterfaceMember, MethodBody, Program,
+        Signature, Struct, Type, TypeInstance,
+    },
     syntax::{NativeImport, ParameterPassing},
 };
 
@@ -37,10 +42,6 @@ const VALUE_TYPE_REF: u32 = 4;
 const INVALID_OPERATION_REF: u32 = 5;
 const STRING_REF: u32 = 3;
 const FIRST_STRUCT_ROW: u32 = 3;
-
-fn struct_row(id: usize) -> u32 {
-    FIRST_STRUCT_ROW + id as u32
-}
 
 fn assembly_reference(
     assembly: &Assembly,
@@ -130,11 +131,17 @@ pub(super) fn write(
             .iter()
             .filter(|method| matches!(method.body, MethodBody::Async(..)))
             .count();
+    let interface_methods = program
+        .structs
+        .iter()
+        .map(interfaces::method_count)
+        .sum::<usize>();
     let native = native::Imports::new(
         &methods,
         &order,
         first_native_wrapper,
         FIRST_STRUCT_ROW as usize + program.structs.len() + namespace_programs.len(),
+        interface_methods,
     );
     let method_count = native.method_end();
     if method_count >= 0x00ff_ffff
@@ -169,15 +176,28 @@ pub(super) fn write(
         sources,
         references,
         &program.instances,
+        &program.structs,
         tests,
     );
     metadata.method_rows = method_rows;
     let first_named_method = namespace_programs
         .first()
         .map_or(native.first_callback_method(), |&(_, row)| row);
-    metadata.add_structs(&program.structs, namespace, first_named_method);
-    for (owner, first_method) in namespace_programs {
-        metadata.add_namespace_program(namespace, owner, first_method);
+    if interface_methods == 0 {
+        metadata.add_structs(&program.structs, namespace, first_named_method);
+        for (owner, first_method) in namespace_programs {
+            metadata.add_namespace_program(namespace, owner, first_method);
+        }
+    } else {
+        metadata.struct_base += namespace_programs.len() as u32;
+        for (owner, first_method) in namespace_programs {
+            metadata.add_namespace_program(namespace, owner, first_method);
+        }
+        metadata.add_structs(
+            &program.structs,
+            namespace,
+            native.first_callback_method() - interface_methods as u32,
+        );
     }
     let mut async_steps = Vec::new();
     for (method_index, logical_id) in order.into_iter().enumerate() {
@@ -332,7 +352,9 @@ pub(super) fn write(
             param_list,
         });
     }
-    native.finish(&mut metadata);
+    native.finish_imports(&mut metadata);
+    metadata.add_interfaces(&program.structs, &mut text)?;
+    native.finish_callbacks(&mut metadata);
 
     text.align(4);
     let metadata_offset = CLI_HEADER_SIZE + image_offset(text.len())?;
@@ -449,6 +471,11 @@ pub(super) struct Tables<'refs> {
     cell_array_indices: HashMap<Type, u32>,
     field_ref_indices: HashMap<(usize, usize), u32>,
     instances: &'refs [TypeInstance],
+    source_types: &'refs [Struct<'refs>],
+    struct_base: u32,
+    interface_members: HashMap<InterfaceMember, u32>,
+    interface_impls: Vec<InterfaceImplRow>,
+    method_impls: Vec<MethodImplRow>,
     types: Vec<TypeDefRow>,
     fields: Vec<FieldRow>,
     parameters: Vec<ParamRow>,
@@ -488,6 +515,7 @@ impl<'refs> Tables<'refs> {
         sources: &[&str],
         externals: &'refs References,
         instances: &'refs [TypeInstance],
+        source_types: &'refs [Struct<'refs>],
         tests: Option<TestOptions<'_>>,
     ) -> Self {
         let mut strings = StringsHeap::new();
@@ -604,6 +632,11 @@ impl<'refs> Tables<'refs> {
             cell_array_indices: HashMap::new(),
             field_ref_indices: HashMap::new(),
             instances,
+            source_types,
+            struct_base: FIRST_STRUCT_ROW,
+            interface_members: HashMap::new(),
+            interface_impls: Vec::new(),
+            method_impls: Vec::new(),
             types: types.into(),
             fields: Vec::new(),
             parameters: Vec::new(),
@@ -657,7 +690,16 @@ impl<'refs> Tables<'refs> {
         tables
     }
 
-    fn add_structs(&mut self, structs: &[Struct<'_>], namespace: Option<&str>, method_end: u32) {
+    fn struct_row(&self, id: usize) -> u32 {
+        self.struct_base + id as u32
+    }
+
+    fn add_structs(
+        &mut self,
+        structs: &[Struct<'_>],
+        namespace: Option<&str>,
+        mut first_method: u32,
+    ) {
         let source_namespace = namespace.map_or(0, |name| self.strings.add(name));
         for (id, definition) in structs.iter().enumerate() {
             let first_field = self.fields.len() as u32 + 1;
@@ -673,7 +715,7 @@ impl<'refs> Tables<'refs> {
                 self.strings.add(&format!("{}`{arity}", definition.name))
             };
             self.add_type_parameters(
-                index(TableId::TypeDef, struct_row(id)),
+                index(TableId::TypeDef, self.struct_row(id)),
                 &definition.type_parameters,
                 &definition.bounds,
             );
@@ -683,8 +725,9 @@ impl<'refs> Tables<'refs> {
                 .map_or(source_namespace, |owner| {
                     self.namespace_index(namespace, owner)
                 });
+            let interface = definition.interface.is_some();
             self.types.push(TypeDefRow {
-                flags: 0x0108 | u32::from(!definition.internal), // sealed, sequential layout
+                flags: (if interface { 0x00a0 } else { 0x0108 }) | u32::from(!definition.internal),
                 type_name,
                 type_namespace: if definition.builtin {
                     let suffix = if name.is_some() {
@@ -699,10 +742,15 @@ impl<'refs> Tables<'refs> {
                 } else {
                     definition_namespace
                 },
-                extends: index(TableId::TypeRef, VALUE_TYPE_REF),
+                extends: if interface {
+                    CodedIndex::default()
+                } else {
+                    index(TableId::TypeRef, VALUE_TYPE_REF)
+                },
                 field_list: first_field,
-                method_list: method_end,
+                method_list: first_method,
             });
+            first_method += interfaces::method_count(definition) as u32;
             for field in &definition.fields {
                 let mut signature = Writer::new();
                 signature.write_u8(0x06); // FIELD
@@ -828,6 +876,12 @@ impl<'refs> Tables<'refs> {
 
     fn collect_nullable_flags(&self, ty: Type, flags: &mut Vec<u8>) {
         match ty {
+            Type::Interface(id) | Type::NullableInterface(id) => {
+                flags.push(if ty.is_nullable() { 2 } else { 1 });
+                for &argument in self.instances[id].arguments.iter() {
+                    self.collect_nullable_flags(argument, flags);
+                }
+            }
             Type::Array(id) | Type::NullableArray(id) => {
                 flags.push(if ty.is_nullable() { 2 } else { 1 });
                 self.collect_nullable_flags(self.instances[id].arguments[0], flags);
@@ -907,7 +961,7 @@ impl<'refs> Tables<'refs> {
 
     pub(super) fn struct_token(&mut self, ty: Type) -> u32 {
         match ty {
-            Type::Struct(id) => TYPE_DEF | struct_row(id),
+            Type::Struct(id) => TYPE_DEF | self.struct_row(id),
             Type::ConstructedStruct(_) => self.specification_token(ty),
             _ => unreachable!("checked struct type"),
         }
@@ -946,6 +1000,14 @@ impl<'refs> Tables<'refs> {
         let ty = ty.non_nullable();
         const TYPE_REF: u32 = 0x0100_0000;
         match ty {
+            Type::Interface(_) => {
+                let index = self.interface_type(ty);
+                if index.table == Some(TableId::TypeDef) {
+                    TYPE_DEF | index.row
+                } else {
+                    TYPE_SPEC | index.row
+                }
+            }
             Type::Struct(_) | Type::ConstructedStruct(_) => self.struct_token(ty),
             Type::MethodParameter(_)
             | Type::ConstructedExternal(_)
@@ -1256,6 +1318,7 @@ impl<'refs> Tables<'refs> {
                 flags |= bound.kind.special_flag();
                 if let TypeBoundKind::Target(ty) = bound.kind {
                     let target = match ty {
+                        Type::Interface(_) => self.interface_type(ty),
                         Type::External(id) => index(TableId::TypeRef, self.type_reference(id)),
                         Type::ConstructedExternal(_)
                         | Type::MethodParameter(_)
@@ -1407,7 +1470,20 @@ impl<'refs> Tables<'refs> {
         match ty {
             Type::Struct(id) => {
                 signature.write_u8(0x11); // ELEMENT_TYPE_VALUETYPE
-                signature.write_compressed_uint(struct_row(id) << 2); // TypeDefOrRefEncoded
+                signature.write_compressed_uint(self.struct_row(id) << 2); // TypeDefOrRefEncoded
+            }
+            Type::Interface(id) | Type::NullableInterface(id) => {
+                let instance = &self.instances[id];
+                let InstanceKind::Interface(id) = instance.kind else {
+                    unreachable!("source interface instance");
+                };
+                let definition = self.struct_row(id) << 2;
+                if instance.arguments.is_empty() {
+                    signature.write_u8(0x12); // ELEMENT_TYPE_CLASS
+                    signature.write_compressed_uint(definition);
+                } else {
+                    self.write_generic_instance(signature, 0x12, definition, &instance.arguments);
+                }
             }
             Type::Array(id) | Type::NullableArray(id) => {
                 signature.write_u8(0x1d); // ELEMENT_TYPE_SZARRAY
@@ -1423,12 +1499,14 @@ impl<'refs> Tables<'refs> {
             | Type::NullableConstructedExternal(id) => {
                 let instance = &self.instances[id];
                 let (kind, definition) = match instance.kind {
-                    InstanceKind::Struct(id) => (0x11, struct_row(id) << 2),
+                    InstanceKind::Struct(id) => (0x11, self.struct_row(id) << 2),
                     InstanceKind::External(id) => (
                         if ty.clr_struct() { 0x11 } else { 0x12 },
                         (self.type_reference(id) << 2) | 1,
                     ),
-                    InstanceKind::Array => unreachable!("generic type instance"),
+                    InstanceKind::Array | InstanceKind::Interface(_) => {
+                        unreachable!("generic type instance")
+                    }
                 };
                 self.write_generic_instance(signature, kind, definition, &instance.arguments);
             }
@@ -1551,6 +1629,8 @@ impl<'refs> Tables<'refs> {
             || self.generic_params.len() > 0x00ff_ffff
             || self.generic_constraint_count() > 0x00ff_ffff
             || self.method_specs.len() > 0x00ff_ffff
+            || self.interface_impls.len() > 0x00ff_ffff
+            || self.method_impls.len() > 0x00ff_ffff
         {
             return Err(image_too_large());
         }
@@ -1634,6 +1714,12 @@ impl<'refs> Tables<'refs> {
         if !self.native_imports.is_empty() {
             header.sorted |= 1 << TableId::ImplMap as u8;
         }
+        if !self.interface_impls.is_empty() {
+            header.sorted |= 1 << TableId::InterfaceImpl as u8;
+        }
+        if !self.method_impls.is_empty() {
+            header.sorted |= 1 << TableId::MethodImpl as u8;
+        }
         let constraint_count = self.generic_constraint_count();
         if constraint_count != 0 {
             header.sorted |= 1 << TableId::GenericParamConstraint as u8;
@@ -1648,10 +1734,12 @@ impl<'refs> Tables<'refs> {
                 (TableId::Field, self.fields.len()),
                 (TableId::MethodDef, self.methods.len()),
                 (TableId::Param, self.parameters.len()),
+                (TableId::InterfaceImpl, self.interface_impls.len()),
                 (TableId::MemberRef, self.members.len()),
                 (TableId::CustomAttribute, self.custom_attributes.len()),
                 (TableId::FieldMarshal, self.field_marshals.len()),
                 (TableId::StandAloneSig, self.locals.len()),
+                (TableId::MethodImpl, self.method_impls.len()),
                 (TableId::ModuleRef, self.module_refs.len()),
                 (TableId::TypeSpec, self.type_specs.len()),
                 (TableId::ImplMap, self.native_imports.len()),
@@ -1682,6 +1770,9 @@ impl<'refs> Tables<'refs> {
         for row in &self.parameters {
             row.write(&mut stream, &context);
         }
+        for row in &self.interface_impls {
+            row.write(&mut stream, &context);
+        }
         for row in &self.members {
             row.write(&mut stream, &context);
         }
@@ -1692,6 +1783,9 @@ impl<'refs> Tables<'refs> {
             row.write(&mut stream, &context);
         }
         for row in &self.locals {
+            row.write(&mut stream, &context);
+        }
+        for row in &self.method_impls {
             row.write(&mut stream, &context);
         }
         for row in &self.module_refs {

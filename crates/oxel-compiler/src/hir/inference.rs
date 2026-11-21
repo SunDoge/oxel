@@ -80,6 +80,18 @@ impl Inference {
         {
             return observe_arguments(&direct);
         }
+        if matches!(
+            pattern.kind,
+            super::InstanceKind::Interface(_) | super::InstanceKind::External(_)
+        ) {
+            for interface in types.local_interfaces(actual.non_nullable()) {
+                if let Some(instance) = interface.instance_id().map(|id| types.instance(id))
+                    && matches_pattern(&instance)
+                {
+                    observe_arguments(&instance)?;
+                }
+            }
+        }
         if matches!(pattern.kind, super::InstanceKind::External(_))
             && types.ancestor_id(actual.non_nullable()).is_some()
         {

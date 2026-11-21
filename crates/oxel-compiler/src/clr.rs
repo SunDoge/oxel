@@ -99,6 +99,8 @@ pub(crate) struct ImportedType {
     pub variance: Vec<Variance>,
     is_reference: bool,
     pub(crate) is_interface: bool,
+    interface_requirements: usize,
+    has_base_interface: bool,
     pub(crate) is_delegate: bool,
     pub(crate) builtin: Option<Type>,
     pub(crate) enum_storage: Option<u8>,
@@ -158,6 +160,7 @@ pub(crate) struct Method {
     pub bounds: Vec<TypeBound>,
     pub invocation: Invocation,
     pub hide_by_name: bool,
+    abstract_method: bool,
     pub defaults: Box<[MetadataConstant]>,
     pub modes: Box<[ArgumentMode]>,
     /// Parameter positions carrying modreq(InAttribute) in the imported signature.
@@ -211,6 +214,7 @@ struct PendingMethod {
     name: String,
     invocation: Invocation,
     hide_by_name: bool,
+    abstract_method: bool,
     type_arity: u16,
     bounds: type_bounds::PendingBounds,
     property: Option<(usize, PropertyAccess)>,
@@ -474,6 +478,8 @@ impl References {
                 },
                 is_reference,
                 is_interface,
+                interface_requirements: 0,
+                has_base_interface: false,
                 is_delegate,
                 builtin,
                 enum_storage,
@@ -560,6 +566,14 @@ impl References {
                 .class
                 .checked_sub(1)
                 .and_then(|row| type_ids.get(row as usize).copied().flatten())
+                && self.types[owner].is_interface
+            {
+                self.types[owner].has_base_interface = true;
+            }
+            if let Some(owner) = implementation
+                .class
+                .checked_sub(1)
+                .and_then(|row| type_ids.get(row as usize).copied().flatten())
                 .filter(|&owner| {
                     let ty = &self.types[owner];
                     ty.is_reference || ty.value_struct || ty.builtin.is_some()
@@ -610,7 +624,6 @@ impl References {
             let Some(owner) = type_ids[index] else {
                 continue;
             };
-            let imported = &self.types[owner];
             let first = class.method_list;
             let end = metadata
                 .type_defs
@@ -625,6 +638,13 @@ impl References {
             else {
                 continue;
             };
+            if self.types[owner].is_interface {
+                self.types[owner].interface_requirements = methods
+                    .iter()
+                    .filter(|method| method.flags & 0x0400 != 0)
+                    .count();
+            }
+            let imported = &self.types[owner];
             for (offset, method) in methods.iter().enumerate() {
                 if method.flags & 7 != 6 {
                     continue;
@@ -763,6 +783,7 @@ impl References {
                     name: name.into(),
                     invocation,
                     hide_by_name: method.flags & 0x80 == 0,
+                    abstract_method: method.flags & 0x0400 != 0,
                     type_arity,
                     bounds,
                     property: property.map(|(id, access, _)| (id, access)),
@@ -1088,6 +1109,7 @@ impl References {
             name,
             invocation,
             hide_by_name,
+            abstract_method,
             property,
             event,
             read_nullability,
@@ -1140,6 +1162,7 @@ impl References {
             bounds,
             invocation,
             hide_by_name,
+            abstract_method,
             defaults,
             modes,
             required_ins,
@@ -1248,6 +1271,22 @@ impl References {
             .members
             .get(name)
             .map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn interface_requirements(&self, owner: usize) -> Option<Vec<usize>> {
+        let ty = &self.types[owner];
+        if !ty.is_interface || ty.has_base_interface {
+            return None;
+        }
+        let mut methods: Vec<_> = ty
+            .members
+            .values()
+            .flatten()
+            .copied()
+            .filter(|&id| self.methods[id].abstract_method)
+            .collect();
+        methods.sort_unstable();
+        (methods.len() == ty.interface_requirements).then_some(methods)
     }
 
     pub(crate) fn parents(

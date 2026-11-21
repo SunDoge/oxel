@@ -14,6 +14,8 @@ enum Kind {
     Question,
     Coalesce,
     Struct,
+    Interface,
+    Impl,
     Enum,
     Match,
     Const,
@@ -520,6 +522,7 @@ fn decode_char(body: &str, span: Span) -> Parsed<u16> {
         .ok_or_else(invalid)
 }
 
+#[derive(Clone)]
 pub(crate) struct Path<'src> {
     pub segments: Vec<(&'src str, Span)>,
     pub type_arguments: Vec<Path<'src>>,
@@ -586,6 +589,7 @@ pub(crate) struct File<'src> {
     pub functions: Vec<Function<'src>>,
     pub types: Vec<TypeDefinition<'src>>,
     pub constants: Vec<ConstDefinition<'src>>,
+    pub implementations: Vec<Implementation<'src>>,
 }
 
 #[derive(Default)]
@@ -606,6 +610,7 @@ pub(crate) struct Module<'ast, 'src> {
     pub functions: Vec<&'ast Function<'src>>,
     pub types: Vec<&'ast TypeDefinition<'src>>,
     pub constants: Vec<&'ast ConstDefinition<'src>>,
+    pub implementations: Vec<&'ast Implementation<'src>>,
 }
 
 impl<'ast, 'src> Module<'ast, 'src> {
@@ -616,6 +621,7 @@ impl<'ast, 'src> Module<'ast, 'src> {
             module.functions.extend(&file.functions);
             module.types.extend(&file.types);
             module.constants.extend(&file.constants);
+            module.implementations.extend(&file.implementations);
         }
         module
     }
@@ -645,6 +651,23 @@ pub(crate) struct TypeDefinition<'src> {
 pub(crate) enum TypeShape<'src> {
     Struct(Vec<TypedName<'src>>),
     Union(Vec<Variant<'src>>),
+    Interface(Vec<InterfaceMethod<'src>>),
+}
+
+pub(crate) struct InterfaceMethod<'src> {
+    pub name: &'src str,
+    pub name_span: Span,
+    pub declaration_span: Span,
+    pub parameters: Vec<FunctionParameter<'src>>,
+    pub result: Option<Path<'src>>,
+}
+
+pub(crate) struct Implementation<'src> {
+    pub type_parameters: Vec<(&'src str, Span)>,
+    pub type_bounds: Vec<TypeBound<'src>>,
+    pub interface: Path<'src>,
+    pub target: Path<'src>,
+    pub methods: Vec<Function<'src>>,
 }
 
 pub(crate) struct Variant<'src> {
@@ -684,6 +707,7 @@ pub(crate) enum PatternKind<'src> {
 }
 
 pub(crate) struct Function<'src> {
+    pub implementation: bool,
     pub async_fn: bool,
     pub internal: bool,
     pub comptime: bool,
@@ -831,12 +855,14 @@ pub(crate) fn function_prefix(
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct TypeBound<'src> {
     pub parameter: usize,
     pub constraint: Bound<'src>,
     pub span: Span,
 }
 
+#[derive(Clone)]
 pub(crate) enum Bound<'src> {
     Type(Path<'src>),
     Reference,
@@ -1235,13 +1261,15 @@ fn parse_with_cursor(
             Fn | Comptime | Async | Extern => parser
                 .function(internal)
                 .map(|function| file.functions.push(function)),
-            Struct | Enum => parser
+            Struct | Enum | Interface => parser
                 .type_definition(internal)
                 .map(|definition| file.types.push(definition)),
-            _ if internal.is_some() => {
-                Err(parser
-                    .expected("'fn', 'comptime', 'extern', 'struct', or 'enum' after 'internal'"))
-            }
+            Impl if internal.is_none() => parser
+                .implementation()
+                .map(|item| file.implementations.push(item)),
+            _ if internal.is_some() => Err(parser.expected(
+                "'fn', 'comptime', 'extern', 'struct', 'enum', or 'interface' after 'internal'",
+            )),
             Name if parser.text(parser.current()) == "namespace" => (|| {
                 let keyword = parser.bump();
                 if file.scope.namespace.is_some()
@@ -1249,6 +1277,7 @@ fn parse_with_cursor(
                     || !file.functions.is_empty()
                     || !file.types.is_empty()
                     || !file.constants.is_empty()
+                    || !file.implementations.is_empty()
                 {
                     return Err(Diagnostic::new(
                         "E0110",
@@ -1266,6 +1295,7 @@ fn parse_with_cursor(
                 if !file.functions.is_empty()
                     || !file.types.is_empty()
                     || !file.constants.is_empty()
+                    || !file.implementations.is_empty()
                 {
                     return Err(Diagnostic::new(
                         "E0110",
@@ -1282,7 +1312,7 @@ fn parse_with_cursor(
             Const => parser
                 .constant()
                 .map(|definition| file.constants.push(definition)),
-            _ => Err(parser.expected("'fn', 'comptime', 'extern', 'struct', 'enum', or 'const'")),
+            _ => Err(parser.expected("a function, type, implementation, or constant declaration")),
         };
         match declaration {
             Ok(()) => {}
@@ -1380,7 +1410,7 @@ impl<'src> Parser<'src> {
     fn starts_declaration(&self) -> bool {
         matches!(
             self.peek(),
-            Fn | Comptime | Async | Extern | Struct | Enum | Const | Hash
+            Fn | Comptime | Async | Extern | Struct | Enum | Interface | Impl | Const | Hash
         ) || (self.peek() == Name
             && matches!(self.text(self.current()), "internal" | "namespace" | "use"))
     }
@@ -1682,7 +1712,32 @@ impl<'src> Parser<'src> {
         let mut type_bounds = Vec::new();
         let type_parameters = self.type_parameters(&mut type_bounds)?;
         self.expect(LeftBrace, "'{'")?;
-        let shape = if keyword.kind == Struct {
+        let shape = if keyword.kind == Interface {
+            let mut methods = Vec::new();
+            while self.take(RightBrace).is_none() {
+                self.expect_interface_fn()?;
+                let header = self.function_header(None)?;
+                if !header.type_parameters.is_empty() {
+                    return Err(Diagnostic::new(
+                        "E0360",
+                        header.name_span,
+                        "interface methods do not yet declare their own type parameters",
+                    ));
+                }
+                let end = self.semicolon()?.span.end;
+                methods.push(InterfaceMethod {
+                    name: header.name,
+                    name_span: header.name_span,
+                    declaration_span: Span {
+                        start: header.start,
+                        end,
+                    },
+                    parameters: header.parameters,
+                    result: header.result,
+                });
+            }
+            TypeShape::Interface(methods)
+        } else if keyword.kind == Struct {
             TypeShape::Struct(self.list(RightBrace, "'}'", Self::typed_name)?)
         } else {
             TypeShape::Union(self.list(RightBrace, "'}'", |parser| {
@@ -1714,6 +1769,50 @@ impl<'src> Parser<'src> {
             shape,
             type_parameters,
             type_bounds,
+        })
+    }
+
+    fn expect_interface_fn(&self) -> Parsed<()> {
+        if self.peek() == Fn {
+            Ok(())
+        } else {
+            Err(self.expected("'fn' or '}'"))
+        }
+    }
+
+    fn implementation(&mut self) -> Parsed<Implementation<'src>> {
+        self.bump(); // impl
+        let mut type_bounds = Vec::new();
+        let type_parameters = self.type_parameters(&mut type_bounds)?;
+        let interface = self.type_path(0)?;
+        self.expect(For, "'for'")?;
+        let target = self.type_path(0)?;
+        self.expect(LeftBrace, "'{'")?;
+        let mut methods = Vec::new();
+        while self.take(RightBrace).is_none() {
+            if !matches!(self.peek(), Fn | Async) {
+                return Err(self.expected("'fn', 'async fn', or '}'"));
+            }
+            let mut method = self.function(None)?;
+            if !method.type_parameters.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0360",
+                    method.name_span,
+                    "implementation methods do not yet declare their own type parameters",
+                ));
+            }
+            method.implementation = true;
+            method.internal = true;
+            method.type_parameters.clone_from(&type_parameters);
+            method.type_bounds.clone_from(&type_bounds);
+            methods.push(method);
+        }
+        Ok(Implementation {
+            type_parameters,
+            type_bounds,
+            interface,
+            target,
+            methods,
         })
     }
 
@@ -1787,6 +1886,7 @@ impl<'src> Parser<'src> {
             FunctionBody::Managed(self.block(0)?)
         };
         Ok(Function {
+            implementation: false,
             async_fn: header.async_fn,
             internal: header.internal,
             comptime: header.comptime,
@@ -2948,6 +3048,8 @@ fn identifier_kind(text: &str) -> Kind {
         "is" => Is,
         "null" => Null,
         "struct" => Struct,
+        "interface" => Interface,
+        "impl" => Impl,
         "enum" => Enum,
         "match" => Match,
         "const" => Const,

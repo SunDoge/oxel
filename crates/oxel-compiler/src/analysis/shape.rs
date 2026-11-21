@@ -70,8 +70,41 @@ pub(super) fn declared_type(definition: &TypeDefinition<'_>) -> Hash {
                 paths(&mut hash, &variant.payload);
             }
         }
+        TypeShape::Interface(methods) => {
+            hash.update(&[2]);
+            length(&mut hash, methods.len());
+            for method in methods {
+                name(&mut hash, method.name);
+                length(&mut hash, method.parameters.len());
+                for parameter in &method.parameters {
+                    name(&mut hash, parameter.name);
+                    path(&mut hash, &parameter.annotation);
+                }
+                length(&mut hash, usize::from(method.result.is_some()));
+                if let Some(result) = &method.result {
+                    path(&mut hash, result);
+                }
+            }
+        }
     }
     hash.finalize()
+}
+
+pub(super) fn implementation(
+    hash: &mut Hasher,
+    implementation: &crate::syntax::Implementation<'_>,
+) {
+    generics(
+        hash,
+        &implementation.type_parameters,
+        &implementation.type_bounds,
+    );
+    path(hash, &implementation.interface);
+    path(hash, &implementation.target);
+    length(hash, implementation.methods.len());
+    for method in &implementation.methods {
+        hash.update(signature(method).as_bytes());
+    }
 }
 
 pub(crate) fn type_names<'src>(annotation: &Path<'src>, visit: &mut impl FnMut(&'src str)) {
@@ -111,6 +144,16 @@ pub(super) fn declared_type_names<'src>(
             for variant in variants {
                 for annotation in &variant.payload {
                     type_names(annotation, &mut visit);
+                }
+            }
+        }
+        TypeShape::Interface(methods) => {
+            for method in methods {
+                for parameter in &method.parameters {
+                    type_names(&parameter.annotation, &mut visit);
+                }
+                if let Some(result) = &method.result {
+                    type_names(result, &mut visit);
                 }
             }
         }

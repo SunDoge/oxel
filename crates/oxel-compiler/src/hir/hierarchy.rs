@@ -50,6 +50,13 @@ impl Structs<'_, '_> {
     }
 
     pub(super) fn upcasts(&self, actual: Type, expected: Type) -> bool {
+        if matches!(actual, Type::Struct(_) | Type::ConstructedStruct(_))
+            && (expected.external_reference() || matches!(expected, Type::Interface(_)))
+        {
+            return self
+                .local_interfaces(actual)
+                .any(|ty| ty == expected || self.upcasts(ty, expected));
+        }
         if actual == expected
             || self.stack_only(actual)
             || actual.is_nullable()

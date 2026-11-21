@@ -821,6 +821,19 @@ impl<'a, 'refs> Body<'a, 'refs> {
                         return;
                     }
                     Target::DefaultConstructor(ty) => self.metadata.default_constructor(*ty),
+                    Target::Interface {
+                        member,
+                        constrained,
+                    } => {
+                        let token = self.metadata.interface_member(*member);
+                        if let Some(receiver) = constrained {
+                            let receiver = self.metadata.runtime_type_token(*receiver);
+                            self.extended(0x16); // constrained.
+                            self.code.extend_from_slice(&receiver.to_le_bytes());
+                        }
+                        self.token_instruction(0x6f, token); // callvirt
+                        return;
+                    }
                     Target::ErrorWriter => self.metadata.error_writer_members().0,
                     Target::WriteErrorLine => {
                         let token = self.metadata.error_writer_members().1;

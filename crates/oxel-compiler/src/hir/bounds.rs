@@ -275,11 +275,14 @@ pub(super) fn resolve(
             syntax::Bound::Type(path) => {
                 let ty = types.scoped_type(path, parameters, None, false, from_struct)?;
                 let definition = types.imported_id(ty).filter(|_| !ty.is_nullable());
-                if definition.is_none() && parameter_index(ty).is_none() {
+                if definition.is_none()
+                    && !matches!(ty, Type::Interface(_))
+                    && parameter_index(ty).is_none()
+                {
                     return Err(Diagnostic::new(
                         "E0211",
                         span,
-                        "a generic bound must name an imported CLR class, interface, or type parameter",
+                        "a generic bound must name a CLR class, interface, or type parameter",
                     ));
                 }
                 if definition.is_some_and(|id| !types.references.imported_type(id).is_interface)
@@ -502,7 +505,8 @@ impl Checker<'_, '_> {
             return !matches!(actual, Type::Void | Type::Never);
         }
         if matches!(actual, Type::MethodParameter(_))
-            && (expected.external_reference() || matches!(expected, Type::MethodParameter(_)))
+            && (expected.external_reference()
+                || matches!(expected, Type::Interface(_) | Type::MethodParameter(_)))
         {
             reachable_bounds(actual, self.bounds).any(|bound| {
                 matches!(bound, TypeBoundKind::Target(target)
@@ -545,9 +549,17 @@ impl Checker<'_, '_> {
         }
         let generic_upcast = matches!(value.ty, Type::MethodParameter(_))
             && value.ty != expected
-            && (expected.external_reference() || matches!(expected, Type::MethodParameter(_)));
+            && (expected.external_reference()
+                || matches!(
+                    expected.non_nullable(),
+                    Type::Interface(_) | Type::MethodParameter(_)
+                ));
         let reference_box = (expected.non_nullable() == Type::Object
-            || (value.ty.scalar() || value.ty.imported_value()) && expected.external_reference())
+            || (value.ty.scalar()
+                || value.ty.imported_value()
+                || matches!(value.ty, Type::Struct(_) | Type::ConstructedStruct(_)))
+                && expected.external_reference()
+            || matches!(expected.non_nullable(), Type::Interface(_)))
             && !value.ty.reference()
             && !matches!(value.ty, Type::Void | Type::Never);
         if generic_upcast || reference_box {

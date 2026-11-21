@@ -155,25 +155,28 @@ pub(super) fn local_interface_call(
         ty: receiver_type,
         span,
     };
-    let kind =
-        if receiver_type.imported_value() || matches!(receiver_type, Type::MethodParameter(_)) {
-            ExprKind::ConstrainedCall {
-                method,
-                type_arguments: Box::new([]),
-                receiver: Box::new(receiver),
-                temporary: None,
-                args: Vec::new(),
-            }
-        } else {
-            ExprKind::Call(
-                Target::External {
-                    method: method.id,
-                    owner: method.owner,
-                    arguments: Box::new([]),
-                },
-                vec![receiver],
-            )
-        };
+    let kind = if receiver_type.imported_value()
+        || matches!(
+            receiver_type,
+            Type::MethodParameter(_) | Type::Struct(_) | Type::ConstructedStruct(_)
+        ) {
+        ExprKind::ConstrainedCall {
+            method,
+            type_arguments: Box::new([]),
+            receiver: Box::new(receiver),
+            temporary: None,
+            args: Vec::new(),
+        }
+    } else {
+        ExprKind::Call(
+            Target::External {
+                method: method.id,
+                owner: method.owner,
+                arguments: Box::new([]),
+            },
+            vec![receiver],
+        )
+    };
     Expr { kind, ty, span }
 }
 

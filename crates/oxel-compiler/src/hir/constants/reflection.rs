@@ -18,6 +18,8 @@ pub(in crate::hir) fn builtin_field_info() -> Struct<'static> {
         internal: false,
         name: "compiler.FieldInfo",
         builtin: true,
+        interface: None,
+        implementations: Vec::new(),
         span,
         fields: fields
             .iter()

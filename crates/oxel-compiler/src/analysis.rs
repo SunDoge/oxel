@@ -23,6 +23,7 @@ pub enum SymbolKind {
     Function,
     Constant,
     Struct,
+    Interface,
     Enum,
     EnumMember,
     Field,
@@ -270,6 +271,19 @@ fn outline(file: &syntax::Module<'_, '_>) -> Vec<Symbol> {
                         kind: SymbolKind::EnumMember,
                         span: variant.declaration_span,
                         name_span: variant.span,
+                        children: Vec::new(),
+                    })
+                    .collect(),
+            ),
+            syntax::TypeShape::Interface(methods) => (
+                SymbolKind::Interface,
+                methods
+                    .iter()
+                    .map(|method| Symbol {
+                        name: method.name.into(),
+                        kind: SymbolKind::Function,
+                        span: method.declaration_span,
+                        name_span: method.name_span,
                         children: Vec::new(),
                     })
                     .collect(),

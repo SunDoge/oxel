@@ -29,6 +29,7 @@ impl<'a> Imports<'a> {
         order: &[usize],
         first_raw: usize,
         first_type: usize,
+        interface_methods: usize,
     ) -> Self {
         let mut wrappers = Vec::new();
         let mut positions = vec![None; methods.len()];
@@ -68,7 +69,7 @@ impl<'a> Imports<'a> {
                 callbacks,
             });
         }
-        let first_callback_method = (first_raw + wrappers.len() + 1) as u32;
+        let first_callback_method = (first_raw + wrappers.len() + interface_methods + 1) as u32;
         for (index, callback) in wrappers
             .iter_mut()
             .flat_map(|wrapper| &mut wrapper.callbacks)
@@ -100,10 +101,13 @@ impl<'a> Imports<'a> {
         self.positions[id].map(|position| &self.wrappers[position])
     }
 
-    pub(super) fn finish(self, metadata: &mut Tables<'_>) {
+    pub(super) fn finish_imports(&self, metadata: &mut Tables<'_>) {
         for wrapper in &self.wrappers {
             wrapper.add_raw_import(metadata);
         }
+    }
+
+    pub(super) fn finish_callbacks(self, metadata: &mut Tables<'_>) {
         if self.callback_count == 0 {
             return;
         }
