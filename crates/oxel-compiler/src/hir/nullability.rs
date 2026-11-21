@@ -139,7 +139,7 @@ impl<'src> Checker<'_, 'src> {
             return Err(Diagnostic::new(
                 "E0311",
                 span,
-                "receiver may be null; check it or provide a fallback with '??'",
+                "receiver may be null; check it or provide a fallback with unwrap_or",
             ));
         }
         Ok(())
@@ -434,71 +434,152 @@ impl<'src> Checker<'_, 'src> {
         ))
     }
 
-    pub(super) fn coalesce(
+    pub(super) fn fallback_call(
         &mut self,
-        left: &syntax::Expr<'src>,
-        right: &syntax::Expr<'src>,
+        span: Span,
+        type_arguments: &[syntax::Path<'src>],
+        args: &[syntax::Expr<'src>],
         expected: Option<Type>,
+        eager: bool,
     ) -> Checked<(ExprKind, Type)> {
-        let left = self.expression(left, None)?;
-        if left.ty == Type::Never {
-            self.expression(right, expected)?;
-            return Ok((left.kind, Type::Never));
-        }
-        if left.ty == Type::Null {
-            if expected.is_some_and(|ty| self.types.nullable_underlying(ty).is_some()) {
-                let right = self.expression(right, expected)?;
-                return Ok((right.kind, right.ty));
-            }
-            let right = self.expression(right, expected.filter(|ty| ty.reference()))?;
-            if right.ty != Type::Never && !right.ty.reference() {
-                return Err(Diagnostic::new(
-                    "E0311",
-                    right.span,
-                    "'??' requires a reference fallback",
-                ));
-            }
-            let ty = right.ty;
-            return Ok((
-                ExprKind::Block(Block {
-                    statements: vec![Statement::Discard(left)],
-                    tail: Some(Box::new(right)),
-                    ty,
-                }),
-                ty,
+        let name = if eager { "unwrap_or" } else { "unwrap_or_else" };
+        let [value, fallback] = args else {
+            return Err(Diagnostic::new(
+                "E0205",
+                span,
+                format!("{name} expects a value and a fallback"),
+            ));
+        };
+        if !type_arguments.is_empty() {
+            return Err(Diagnostic::new(
+                "E0205",
+                span,
+                format!("{name} does not accept explicit type arguments"),
             ));
         }
-        if let Some(underlying) = self.types.nullable_underlying(left.ty) {
-            return self.coalesce_value(left, underlying, right);
+        let left = self.expression(value, None)?;
+        self.value_fallback(span, left, fallback, expected, eager)
+    }
+
+    pub(super) fn value_fallback(
+        &mut self,
+        span: Span,
+        left: Expr,
+        fallback: &syntax::Expr<'src>,
+        expected: Option<Type>,
+        eager: bool,
+    ) -> Checked<(ExprKind, Type)> {
+        let name = if eager { "unwrap_or" } else { "unwrap_or_else" };
+        if left.ty == Type::Never {
+            self.expression(fallback, expected)?;
+            return Ok((left.kind, Type::Never));
         }
-        if let Some((layout, payload)) = self.standard_option_payload(left.ty) {
-            let fallback = self.expression(right, Some(payload))?;
-            let value = self.option_or(left, layout, payload, payload, fallback)?;
-            return Ok((value.kind, value.ty));
-        }
-        if !left.ty.is_nullable() {
+        let carrier = self.standard_carrier_payload(left.ty);
+        let underlying = self.types.nullable_underlying(left.ty);
+        if carrier.is_none()
+            && underlying.is_none()
+            && !left.ty.is_nullable()
+            && left.ty != Type::Null
+        {
             return Err(Diagnostic::new(
                 "E0311",
                 left.span,
-                "the left operand of '??' must be nullable",
+                format!(
+                    "the first argument of {name} must be Option, Result, or a nullable CLR value"
+                ),
             ));
         }
-        let array_hint = (matches!(right.kind, Expression::Array(_))
-            && self.types.array_element(left.ty).is_some())
-        .then_some(left.ty.non_nullable());
-        let right = self.expression(right, array_hint)?;
-        let ty = if right.ty.is_nullable() || right.ty == Type::Null {
-            left.ty
-        } else {
-            left.ty.non_nullable()
+        let mut tail = fallback;
+        while let Expression::Block(block) = &tail.kind {
+            let Some(value) = &block.tail else { break };
+            tail = value;
+        }
+        let lifted_null = left.ty == Type::Null
+            && expected.is_some_and(|ty| self.types.nullable_underlying(ty).is_some());
+        let hint = match left.ty {
+            Type::Null if lifted_null => expected,
+            Type::Null => expected.filter(|ty| ty.reference()),
+            _ => carrier
+                .map(|(_, payload)| payload)
+                .or_else(|| underlying.filter(|_| tail.is_numeric_literal()))
+                .or_else(|| {
+                    (matches!(tail.kind, Expression::Array(_))
+                        && self.types.array_element(left.ty).is_some())
+                    .then_some(left.ty.non_nullable())
+                }),
         };
-        let temporary = self.local(ty, left.span)?;
-        self.require(right.ty, ty, right.span)?;
-        let right = self.coerce(right, ty);
-        Ok((
-            ExprKind::Coalesce(Box::new(left), Box::new(right), temporary),
+        let right = self.expression(fallback, hint)?;
+        if left.ty == Type::Null {
+            if !lifted_null && right.ty != Type::Never && !right.ty.reference() {
+                return Err(Diagnostic::new(
+                    "E0311",
+                    right.span,
+                    "null requires a reference fallback",
+                ));
+            }
+            return Ok(with_fallback_statements(
+                vec![Statement::Discard(left)],
+                right,
+            ));
+        }
+        if eager && right.ty == Type::Never {
+            return Ok(with_fallback_statements(
+                vec![Statement::Discard(left)],
+                right,
+            ));
+        }
+        let (left, right, statements) = if eager {
+            let mut statements = Vec::new();
+            let left = self.save_fallback_argument(left, &mut statements)?;
+            let right = self.save_fallback_argument(right, &mut statements)?;
+            (left, right, statements)
+        } else {
+            (left, right, Vec::new())
+        };
+        let result = if let Some((layout, payload)) = carrier {
+            self.carrier_or(left, layout, payload, payload, right)?
+        } else if let Some(underlying) = underlying {
+            self.coalesce_value(left, underlying, right)?
+        } else {
+            let ty = if right.ty.is_nullable() || right.ty == Type::Null {
+                left.ty
+            } else {
+                left.ty.non_nullable()
+            };
+            let temporary = self.local(ty, left.span)?;
+            self.require(right.ty, ty, right.span)?;
+            let right = self.coerce(right, ty);
+            Expr {
+                kind: ExprKind::Coalesce(Box::new(left), Box::new(right), temporary),
+                ty,
+                span,
+            }
+        };
+        Ok(with_fallback_statements(statements, result))
+    }
+
+    fn save_fallback_argument(
+        &mut self,
+        value: Expr,
+        statements: &mut Vec<Statement>,
+    ) -> Checked<Expr> {
+        let Expr { ty, span, .. } = value;
+        let storage = if ty == Type::Null {
+            Type::NullableObject
+        } else {
+            ty
+        };
+        let slot = self.local(storage, span)?;
+        statements.push(Statement::Store {
+            target: Value::Local(slot),
+            value,
+            span,
+        });
+        Ok(Expr {
+            kind: ExprKind::Load(Value::Local(slot)),
             ty,
-        ))
+            span,
+        })
     }
 
     pub(super) fn require_nullable_member(
@@ -516,16 +597,7 @@ impl<'src> Checker<'_, 'src> {
         })
     }
 
-    fn coalesce_value(
-        &mut self,
-        left: Expr,
-        underlying: Type,
-        fallback: &syntax::Expr<'src>,
-    ) -> Checked<(ExprKind, Type)> {
-        let right = self.expression(
-            fallback,
-            fallback.is_numeric_literal().then_some(underlying),
-        )?;
+    fn coalesce_value(&mut self, left: Expr, underlying: Type, right: Expr) -> Checked<Expr> {
         let owner = left.ty;
         let span = left.span;
         let ty = if right.ty == owner || right.ty == Type::Null {
@@ -577,8 +649,8 @@ impl<'src> Checker<'_, 'src> {
             ty,
             span,
         };
-        Ok((
-            ExprKind::Block(Block {
+        Ok(Expr {
+            kind: ExprKind::Block(Block {
                 statements: vec![Statement::Store {
                     target: Value::Local(slot),
                     value: left,
@@ -588,7 +660,8 @@ impl<'src> Checker<'_, 'src> {
                 ty,
             }),
             ty,
-        ))
+            span,
+        })
     }
 
     pub(super) fn join_branches(&self, yes: &mut Block, no: Expr) -> Checked<(Type, Expr)> {
@@ -646,5 +719,21 @@ impl<'src> Checker<'_, 'src> {
             self.require(b, a, span)?;
             a
         })
+    }
+}
+
+fn with_fallback_statements(statements: Vec<Statement>, result: Expr) -> (ExprKind, Type) {
+    let ty = result.ty;
+    if statements.is_empty() {
+        (result.kind, ty)
+    } else {
+        (
+            ExprKind::Block(Block {
+                statements,
+                tail: Some(Box::new(result)),
+                ty,
+            }),
+            ty,
+        )
     }
 }

@@ -18,7 +18,9 @@ fn main() {
     let label_text = number.SetAndReturn::<string>(60, "hello");
     let text = new Samples.Interop.TextCell(label_text);
     let copy = Samples.Interop.Cells.Copy(text);
-    let label = Samples.Interop.Cells.OptionalLabel() ?? copy;
+    let label = unwrap_or_else(Samples.Interop.Cells.OptionalLabel(), {
+        copy
+    });
     let reader: Samples.Interop.IReadCell<object> = label;
     System.Console.WriteLine(reader.Read());
 

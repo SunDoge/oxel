@@ -3,7 +3,7 @@ fn main() {
     let name = System.Array.Find(names) |value| {
         value == "Katherine"
     };
-    System.Console.WriteLine(name ?? "missing");
+    System.Console.WriteLine(unwrap_or(name, "missing"));
 
     let ids = [10, 20];
     let id: i32 = System.Array.Find(ids) |value| {

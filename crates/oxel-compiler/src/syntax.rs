@@ -18,7 +18,6 @@ enum Kind {
     Is,
     Null,
     Question,
-    Coalesce,
     Struct,
     Interface,
     Impl,
@@ -269,7 +268,12 @@ fn lex(source: &str, base: usize) -> (Vec<Token>, Vec<Diagnostic>) {
             b',' => Comma,
             b'?' if bytes.get(pos) == Some(&b'?') => {
                 pos += 1;
-                Coalesce
+                errors.push(Diagnostic::new(
+                    "E0111",
+                    span(start, pos),
+                    "'??' is no longer an operator; use unwrap_or or unwrap_or_else",
+                ));
+                Invalid
             }
             b'?' => Question,
             b'&' if bytes.get(pos) == Some(&b'&') => {
@@ -1100,7 +1104,6 @@ pub(crate) enum Unary {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Binary {
-    Coalesce,
     And,
     Or,
     BitAnd,
@@ -2321,12 +2324,7 @@ impl<'src> Parser<'src, '_> {
                 self.mark_shift();
             }
             self.pos += tokens;
-            let next_binding = if operator_kind == Coalesce {
-                binding
-            } else {
-                binding + 1
-            };
-            let right = self.expression_inner(next_binding, depth + 1, allow_literal)?;
+            let right = self.expression_inner(binding + 1, depth + 1, allow_literal)?;
             let tree_depth = 1 + left.depth.max(right.depth);
             self.nesting(depth + tree_depth)?;
             let span = Span {
@@ -3143,7 +3141,6 @@ pub fn valid_identifier(text: &str) -> bool {
 
 fn binary(kind: Kind) -> Option<(Binary, u8)> {
     Some(match kind {
-        Coalesce => (Binary::Coalesce, 0),
         OrOr => (Binary::Or, 1),
         AndAnd => (Binary::And, 2),
         Equal => (Binary::Eq, 3),

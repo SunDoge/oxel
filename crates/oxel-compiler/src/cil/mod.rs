@@ -1623,7 +1623,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             Lt | Ge if operand.unsigned() => self.extended(0x05), // clt.un
             Gt | Le => self.extended(0x02),                  // cgt
             Lt | Ge => self.extended(0x04),                  // clt
-            And | Or | Coalesce => unreachable!("short-circuit operators lower as branches"),
+            And | Or => unreachable!("short-circuit operators lower as branches"),
         }
         if matches!(binary, Add | Sub | Mul | Div | Rem | Shl | Shr) {
             self.normalize_numeric(operand);

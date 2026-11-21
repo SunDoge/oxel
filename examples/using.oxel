@@ -7,7 +7,7 @@ fn first_line(reader: System.IO.StringReader) -> Option<string> {
 
 fn main() {
     let reader = new System.IO.StringReader("oxel");
-    System.Console.WriteLine(first_line(reader) ?? "empty");
+    System.Console.WriteLine(unwrap_or(first_line(reader), "empty"));
     try {
         reader.ReadLine();
     } catch (_: System.ObjectDisposedException) {

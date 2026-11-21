@@ -714,17 +714,22 @@ impl<'src> Checker<'_, 'src> {
     }
 
     pub(super) fn standard_option_payload(&self, ty: Type) -> Option<(CarrierLayout, Type)> {
-        let Type::ConstructedStruct(instance) = ty else {
+        self.standard_carrier_payload(ty)
+            .filter(|(layout, _)| layout.error_field.is_none())
+    }
+
+    pub(super) fn standard_carrier_payload(&self, ty: Type) -> Option<(CarrierLayout, Type)> {
+        let Type::ConstructedStruct(id) = ty else {
             return None;
         };
-        let types = self.types;
-        let instance = types.instance(instance);
+        let instance = self.types.instance(id);
         let InstanceKind::Struct(definition) = instance.kind else {
             return None;
         };
-        types.definitions[definition].builtin.then(|| {
+        let id = Some(definition);
+        (self.types.builtin_option == id || self.types.builtin_result == id).then(|| {
             (
-                CarrierLayout::for_definition(types, definition).expect("standard Option"),
+                CarrierLayout::for_definition(self.types, definition).expect("standard carrier"),
                 instance.arguments[0],
             )
         })
@@ -746,10 +751,10 @@ impl<'src> Checker<'_, 'src> {
             },
             expected,
         );
-        self.option_or(value, layout, payload, expected, fallback)
+        self.carrier_or(value, layout, payload, expected, fallback)
     }
 
-    pub(super) fn option_or(
+    pub(super) fn carrier_or(
         &mut self,
         value: Expr,
         layout: CarrierLayout,

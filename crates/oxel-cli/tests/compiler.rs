@@ -343,7 +343,7 @@ fn generic_construction_requires_a_valid_default_for_oxel_value_types() {
             let slot = forward::<Slot<string>>();
             let explicit = Box::<Named> { value: Named { name: "explicit" } };
             let _unused: Forward;
-            System.Console.WriteLine(slot.label ?? "empty");
+            System.Console.WriteLine(unwrap_or(slot.label, "empty"));
             System.Console.WriteLine(slot.index);
             System.Console.WriteLine(explicit.value.name);
         }
@@ -399,7 +399,7 @@ fn clr_zero_initialized_options_are_none_at_runtime_and_comptime() {
         }
         const ZERO = empty();
         const LABEL = inspect(propagate(ZERO));
-        const FALLBACK = ZERO ?? "constant fallback";
+        const FALLBACK = unwrap_or(ZERO, "constant fallback");
 
         struct Slot { label: Option<string> }
         fn first(values: Slot[]) -> Option<string> {
@@ -416,7 +416,7 @@ fn clr_zero_initialized_options_are_none_at_runtime_and_comptime() {
             };
             System.Console.WriteLine(result);
             let result: Option<string> = try { values[0].label? };
-            System.Console.WriteLine(result ?? "local propagation");
+            System.Console.WriteLine(unwrap_or(result, "local propagation"));
         }
         "#,
     )
@@ -1433,12 +1433,12 @@ fn optional_casts_use_standard_options_and_clr_runtime_types() {
                 Some(pair) => System.Console.WriteLine(pair.value),
                 None => System.Console.WriteLine("missing"),
             }
-            System.Console.WriteLine(30 as? i32 ?? fallback());
-            System.Console.WriteLine(30 as? bool ?? false);
+            System.Console.WriteLine(unwrap_or_else(30 as? i32, { fallback() }));
+            System.Console.WriteLine(unwrap_or(30 as? bool, false));
             let name: string? = "oxel";
-            System.Console.WriteLine(name as? string ?? "missing");
+            System.Console.WriteLine(unwrap_or(name as? string, "missing"));
             let result: Option<i32> = try { (boxed as? Pair)?.value + 1 };
-            System.Console.WriteLine(result ?? 0);
+            System.Console.WriteLine(unwrap_or(result, 0));
         }
         "#,
     )
@@ -1490,7 +1490,7 @@ fn preserves_clr_cast_checks_after_an_object_upcast() {
 }
 
 #[test]
-fn nullable_references_refine_and_coalesce_lazily() {
+fn nullable_references_refine_and_fall_back_lazily() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("nullable.oxel");
     fs::write(&path, include_str!("../../../examples/nullable.oxel")).unwrap();
@@ -1512,17 +1512,17 @@ fn nullable_references_refine_and_coalesce_lazily() {
         fn main() {
             let row = Row { value: echo(null) };
             System.Console.WriteLine(row.value == null);
-            let known: string = mark("left", "ok") ?? mark("bad", null) ?? "fallback";
+            let known: string = unwrap_or_else(mark("left", "ok"), { unwrap_or(mark("bad", null), "fallback") });
             System.Console.WriteLine(known);
-            System.Console.WriteLine(mark("missing", null) ?? mark("right", "provided") ?? stop());
+            System.Console.WriteLine(unwrap_or_else(mark("missing", null), { unwrap_or_else(mark("right", "provided"), { stop() }) }));
             let merged = if true { "value" } else { null };
-            System.Console.WriteLine(merged ?? "other");
+            System.Console.WriteLine(unwrap_or(merged, "other"));
             let erased: object? = null;
             let cast = erased as string?;
             System.Console.WriteLine(cast is string);
-            let restored = erased ?? 30;
+            let restored = unwrap_or(erased, 30);
             System.Console.WriteLine(restored as i32);
-            let text = null ?? "text";
+            let text = unwrap_or(null, "text");
             System.Console.WriteLine(text);
             let a: string? = "alpha";
             let b: string? = "-beta";
@@ -1647,8 +1647,9 @@ fn rejects_nullable_references_in_nonnullable_use_sites() {
         ("fn main() { let value: string = null; }", "E0301"),
         ("fn main() { let value = null; }", "E0311"),
         ("fn main() { let value: i32? = null; }", "E0311"),
-        ("fn main() { let value = null ?? 30; }", "E0311"),
-        (r#"fn main() { let value = "a" ?? "b"; }"#, "E0311"),
+        ("fn main() { let value = unwrap_or(null, 30); }", "E0311"),
+        ("fn main() { let value = null ?? 30; }", "E0111"),
+        (r#"fn main() { let value = unwrap_or("a", "b"); }"#, "E0311"),
         (
             r#"fn main() { let value: string? = null; value + "!"; }"#,
             "E0302",
@@ -1697,7 +1698,7 @@ fn checks_delayed_initialization_through_control_flow() {
 
         fn fallback(text: string?) -> i32 {
             let mut value: i32;
-            let _ = text ?? { value = 14; "fallback" };
+            let _ = unwrap_or_else(text, { value = 14; "fallback" });
             if text == null {
                 value = 14;
             } else {
@@ -1774,7 +1775,7 @@ fn rejects_reads_and_reassignments_without_pathwise_proof() {
             "E0322",
         ),
         (
-            r#"fn f(text: string?) { let x: i32; let _ = text ?? { x = 1; "fallback" }; System.Console.WriteLine(x); } fn main() {}"#,
+            r#"fn f(text: string?) { let x: i32; let _ = unwrap_or_else(text, { x = 1; "fallback" }); System.Console.WriteLine(x); } fn main() {}"#,
             "E0321",
         ),
         ("fn main() { let x: string?; if x != null {} }", "E0321"),
@@ -3498,15 +3499,15 @@ fn arrays_allocate_and_update_clr_vectors() {
             System.Console.WriteLine(first(words));
             let optional = new string?[2];
             optional[1] = "ready";
-            System.Console.WriteLine(optional[0] ?? optional[1] ?? "missing");
+            System.Console.WriteLine(unwrap_or_else(optional[0], { unwrap_or(optional[1], "missing") }));
             let nullable: i32[]? = null;
-            System.Console.WriteLine((nullable ?? [42])[0]);
+            System.Console.WriteLine((unwrap_or_else(nullable, { [42] }))[0]);
 
             let grid = [[1, 2], [3, 4]];
             System.Console.WriteLine(grid[1][0]);
             let nested = new i32[]?[2];
             nested[0] = [41];
-            System.Console.WriteLine((nested[0] ?? [0])[0]);
+            System.Console.WriteLine((unwrap_or_else(nested[0], { [0] }))[0]);
             let counts = new Counter[1];
             System.Console.WriteLine(counts[0].amount);
             counts[0] = Counter { amount: 25 };
@@ -3863,4 +3864,57 @@ fn internal_is_contextual_and_internal_main_can_be_an_entry_point() {
     )
     .unwrap();
     assert_eq!(stdout(cli(folder.path(), "run", &path)).trim(), "30");
+}
+
+#[test]
+fn explicit_fallbacks_handle_option_result_and_evaluation_order() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("main.oxel");
+    fs::write(
+        &path,
+        r#"
+        fn mark(label: string, value: i32) -> i32 {
+            System.Console.WriteLine(label);
+            value
+        }
+
+        fn first() -> Option<i32> {
+            Option.Some(mark("receiver", 30))
+        }
+
+        fn provide() -> Result<i32, string> { Result.Ok(30) }
+        fn fail() -> Result<i32, string> { Result.Err("failed") }
+
+        fn main() {
+            System.Console.WriteLine(first().unwrap_or(mark("eager", 0)));
+            System.Console.WriteLine(first().unwrap_or_else({ mark("unused", 0) }));
+            let none: Option<i32> = Option.None;
+            System.Console.WriteLine(none.unwrap_or_else({ mark("missing", 30) }));
+            System.Console.WriteLine(provide().unwrap_or(0));
+            System.Console.WriteLine(fail().unwrap_or_else({ mark("error", 30) }));
+        }
+        "#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_oxel"))
+        .current_dir(folder.path())
+        .args(["run", "main.oxel"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "receiver", "eager", "30", "receiver", "30", "missing", "30", "30", "error", "30"
+        ]
+    );
+    let errors = oxel::check("fn main() { let value = null ?? \"fallback\"; }").unwrap_err();
+    assert_eq!(errors[0].code, "E0111");
+    assert!(errors[0].message.contains("unwrap_or_else"));
 }

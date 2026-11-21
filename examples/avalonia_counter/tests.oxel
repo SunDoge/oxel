@@ -10,14 +10,28 @@ fn click(button: Button) {
 fn counter_actions_patch_existing_controls() {
     let panel = new StackPanel();
     mount_counter(panel);
-    let label = (panel.Children[0] as? TextBlock) ?? throw new InvalidOperationException();
-    let actions = (panel.Children[1] as? StackPanel) ?? throw new InvalidOperationException();
-    let decrement = (actions.Children[0] as? Button) ?? throw new InvalidOperationException();
-    let reset = (actions.Children[1] as? Button) ?? throw new InvalidOperationException();
-    let increment = (actions.Children[2] as? Button) ?? throw new InvalidOperationException();
+    let label = (panel.Children[0] as? TextBlock).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
+    let actions = (panel.Children[1] as? StackPanel).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
+    let decrement = (actions.Children[0] as? Button).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
+    let reset = (actions.Children[1] as? Button).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
+    let increment = (actions.Children[2] as? Button).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
     let mut collection_changes = 0;
-    panel.Children.CollectionChanged += |_, _| { collection_changes += 1; };
-    actions.Children.CollectionChanged += |_, _| { collection_changes += 1; };
+    panel.Children.CollectionChanged += |_, _| {
+        collection_changes += 1;
+    };
+    actions.Children.CollectionChanged += |_, _| {
+        collection_changes += 1;
+    };
 
     assert(String.Equals(label.Text, "Count: 0"));
     assert(!reset.IsEnabled);
@@ -47,7 +61,9 @@ fn keyed_diff_moves_inserts_removes_and_refreshes_callbacks() {
         if step != 0 {
             text(ui, "new_label", "New");
         }
-        button(ui, "advance", "Advance", true) { step = next; };
+        button(ui, "advance", "Advance", true) {
+            step = next;
+        };
         if step == 0 {
             text(ui, "last", "Last");
         } else if step == 2 {
@@ -56,7 +72,9 @@ fn keyed_diff_moves_inserts_removes_and_refreshes_callbacks() {
     };
 
     let first = panel.Children[0];
-    let advance = (panel.Children[1] as? Button) ?? throw new InvalidOperationException();
+    let advance = (panel.Children[1] as? Button).unwrap_or_else({
+        throw new InvalidOperationException()
+    });
     click(advance);
     assert(panel.Children.Count == 3);
     assert(Object.ReferenceEquals(panel.Children[0], first));

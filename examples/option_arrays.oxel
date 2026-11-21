@@ -7,6 +7,6 @@ fn main() {
     slots[1] = Slot { label: Option.Some("oxel") };
 
     for slot in slots {
-        System.Console.WriteLine(slot.label ?? "empty");
+        System.Console.WriteLine(unwrap_or(slot.label, "empty"));
     }
 }

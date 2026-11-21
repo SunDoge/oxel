@@ -223,7 +223,7 @@ fn resolves_and_executes_static_overloads_from_a_csharp_assembly() {
             System.Console.WriteLine(Samples.Interop.Numbers.ObjectOverload(true));
             let missing: object? = Samples.Interop.Numbers.NullObject();
             System.Console.WriteLine(missing is object);
-            System.Console.WriteLine((missing ?? 30) as i32);
+            System.Console.WriteLine((unwrap_or(missing, 30)) as i32);
             let reported: object = report_kind(30);
             System.Console.WriteLine(reported as i32);
         }
@@ -867,30 +867,30 @@ fn exchanges_nullable_signature_metadata_with_csharp() {
         fn forward<T>(value: T) -> T { Boundary.Api.Select::<T>(value, 0) }
         fn recover(value: Option<string?>) -> Option<string?> { try { value? } }
         fn main() {
-            System.Console.WriteLine(Boundary.Api.Mix(0, null, true, "fallback") ?? "missing");
+            System.Console.WriteLine(unwrap_or(Boundary.Api.Mix(0, null, true, "fallback"), "missing"));
             let item = new Boundary.Reader();
             item.Status = null;
-            System.Console.WriteLine(item.Status ?? "unset");
-            let reader = Boundary.Api.Optional(false) ?? new Boundary.RequiredReader();
-            System.Console.WriteLine(reader.Read(null) ?? "fallback");
+            System.Console.WriteLine(unwrap_or(item.Status, "unset"));
+            let reader = unwrap_or_else(Boundary.Api.Optional(false), { new Boundary.RequiredReader() });
+            System.Console.WriteLine(unwrap_or(reader.Read(null), "fallback"));
             let refined: string = Boundary.Api.Identity(new Boundary.RequiredReader().Read(null));
             System.Console.WriteLine(refined);
             let empty = Boundary.Api.Empty();
-            let value = Boundary.Api.Identity(empty.Value) ?? "imported";
+            let value = unwrap_or(Boundary.Api.Identity(empty.Value), "imported");
             System.Console.WriteLine(value);
             let wrapped = wrap_nullable(Cell::<string?> { value: null });
-            System.Console.WriteLine(identity(wrapped.value) ?? "inferred");
-            System.Console.WriteLine(identity::<string?>(null) ?? "explicit");
+            System.Console.WriteLine(unwrap_or(identity(wrapped.value), "inferred"));
+            System.Console.WriteLine(unwrap_or(identity::<string?>(null), "explicit"));
             let result = recover(Option.Some::<string?>(null));
             match result {
-                Some(text) => System.Console.WriteLine(text ?? "some null"),
+                Some(text) => System.Console.WriteLine(unwrap_or(text, "some null")),
                 None => System.Console.WriteLine("none"),
             }
-            System.Console.WriteLine(cross([Boundary.Api.Wrap(null)])[0].Value ?? "nested");
+            System.Console.WriteLine(unwrap_or(cross([Boundary.Api.Wrap(null)])[0].Value, "nested"));
             let required: string = new Boundary.RequiredReader().ReadPacket().Value;
             System.Console.WriteLine(required);
             let annotated = Boundary.Api.Annotated::<string>(null);
-            System.Console.WriteLine(annotated ?? "annotated");
+            System.Console.WriteLine(unwrap_or(annotated, "annotated"));
             let number: i32 = Boundary.Api.Annotated(30);
             System.Console.WriteLine(number);
             let text: string? = null;
@@ -899,10 +899,10 @@ fn exchanges_nullable_signature_metadata_with_csharp() {
             System.Console.WriteLine(forward("fallback overload"));
             let cell = new Boundary.OptionalCell<string>();
             cell.Field = "field";
-            System.Console.WriteLine(cell.Field ?? "empty");
+            System.Console.WriteLine(unwrap_or(cell.Field, "empty"));
             cell.Field = null;
-            System.Console.WriteLine(cell.Value ?? "property");
-            System.Console.WriteLine(cell.Values()[0] ?? "element");
+            System.Console.WriteLine(unwrap_or(cell.Value, "property"));
+            System.Console.WriteLine(unwrap_or(cell.Values()[0], "element"));
             let zero: i32 = new Boundary.OptionalCell<i32>().Value;
             System.Console.WriteLine(zero);
         }
@@ -1210,7 +1210,7 @@ fn constructs_imported_generic_classes_and_calls_specialized_members() {
             System.Console.WriteLine((item as Fixture.Box<string>).Value);
             System.Console.WriteLine(item is Fixture.Box<i32>);
             let nullable: Fixture.Box<i32>? = null;
-            let fallback = (nullable ?? a).Value;
+            let fallback = (unwrap_or_else(nullable, { a })).Value;
             System.Console.WriteLine(fallback);
             let nested = new Fixture.Pair<Fixture.Box<string>, i64>(b, 3000000000);
             System.Console.WriteLine(nested.Left.Value);
@@ -1220,7 +1220,7 @@ fn constructs_imported_generic_classes_and_calls_specialized_members() {
             let made = Fixture.Factory.Make(30);
             System.Console.WriteLine(Fixture.Factory.Read(made));
             a.Next = made.Copy(made);
-            System.Console.WriteLine((a.Next ?? a).Value);
+            System.Console.WriteLine((unwrap_or_else(a.Next, { a })).Value);
             System.Console.WriteLine(made.WithLabel("label").Right);
             let inferred = Fixture.Factory.Identity(made);
             System.Console.WriteLine(inferred.Value);
@@ -1228,7 +1228,7 @@ fn constructs_imported_generic_classes_and_calls_specialized_members() {
             System.Console.WriteLine(nested_factory.Left.Value + nested_factory.Right);
             let long = new Fixture.Box<i64>(3);
             System.Console.WriteLine(Fixture.Factory.Replace(long, 3000000000).Value);
-            System.Console.WriteLine((Fixture.Factory.None() ?? b).Value);
+            System.Console.WriteLine((unwrap_or_else(Fixture.Factory.None(), { b })).Value);
             System.Console.WriteLine(new Fixture.Envelope(b).Item.Value);
             let derived = new Fixture.IntegerBox(29);
             System.Console.WriteLine(derived.Exchange(20));
@@ -1250,7 +1250,7 @@ fn constructs_imported_generic_classes_and_calls_specialized_members() {
             System.Console.WriteLine(a.Take(b));
             System.Console.WriteLine(root.With(30).Right);
             System.Console.WriteLine(touch(new Fixture.Slot()));
-            System.Console.WriteLine(Fixture.Factory.NullableArgument().Value ?? "empty");
+            System.Console.WriteLine(unwrap_or(Fixture.Factory.NullableArgument().Value, "empty"));
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -1502,11 +1502,11 @@ fn checks_and_executes_clr_variant_reference_conversions() {
             System.Console.WriteLine(choose(false, text).Read());
             let nullable: Variant.IRead<string>? = null;
             let nullable_wide: Variant.IRead<object>? = nullable;
-            System.Console.WriteLine((nullable_wide ?? widened).Read());
+            System.Console.WriteLine((unwrap_or_else(nullable_wide, { widened })).Read());
             let boxed: object = text;
             System.Console.WriteLine((boxed as Variant.IRead<object>).Read());
             let allows_null: Variant.IRead<object?> = text;
-            System.Console.WriteLine(allows_null.Read() ?? "empty");
+            System.Console.WriteLine(unwrap_or(allows_null.Read(), "empty"));
             let writes_nullable = new Variant.Printer<object?>();
             let sink: Variant.IWrite<string> = writes_nullable;
             sink.Write("nullable sink");
@@ -2351,13 +2351,13 @@ fn clr_managed_addresses_preserve_types_and_assignment_order() {
 
             let text: string?;
             ByRef.Api.Copy("yes", out text);
-            System.Console.WriteLine(text ?? "no");
+            System.Console.WriteLine(unwrap_or(text, "no"));
             let mut mutable_text: string? = text;
             ByRef.Api.Clear(ref mutable_text);
-            System.Console.WriteLine(mutable_text ?? "cleared");
+            System.Console.WriteLine(unwrap_or(mutable_text, "cleared"));
             let empty: string?;
             ByRef.Api.Next(out empty);
-            System.Console.WriteLine(empty ?? "empty");
+            System.Console.WriteLine(unwrap_or(empty, "empty"));
 
             System.Console.WriteLine(ByRef.Api.ReadOnly(in number));
             System.Console.WriteLine(ByRef.Api.Pick(count & 15));
@@ -2888,9 +2888,9 @@ fn reads_and_writes_public_clr_fields() {
             let base: Fields.Base = current;
             System.Console.WriteLine(base.Shadow);
             current.Label = null;
-            System.Console.WriteLine(current.Label ?? current.Name);
+            System.Console.WriteLine(unwrap_or_else(current.Label, { current.Name }));
             current.Label = "set";
-            System.Console.WriteLine(current.Label ?? current.Name);
+            System.Console.WriteLine(unwrap_or_else(current.Label, { current.Name }));
 
             Fields.Registry.Slot.Entry = 42;
             System.Console.WriteLine(Fields.Registry.Slot.Entry);
@@ -2904,8 +2904,8 @@ fn reads_and_writes_public_clr_fields() {
             Fields.Registry.Signal = current.Modified + base.Modified;
             System.Console.WriteLine(Fields.Registry.Signal);
             Fields.Store::<string>.State = "visible";
-            System.Console.WriteLine(Fields.Store::<string>.State ?? "missing");
-            System.Console.WriteLine(Fields.Registry.Missing ?? BANNER);
+            System.Console.WriteLine(unwrap_or(Fields.Store::<string>.State, "missing"));
+            System.Console.WriteLine(unwrap_or_else(Fields.Registry.Missing, { BANNER }));
             System.Console.WriteLine(Fields.Registry.MissingObject == null);
             Fields.Registry.Sequence = 0;
             Fields.Registry.Receiver().Count += Fields.Registry.ReplaceCount();
@@ -3724,7 +3724,7 @@ fn reads_and_writes_clr_default_indexers() {
 
             let nullable = new Indexers.NullableIndex();
             nullable[null] = null;
-            System.Console.WriteLine(nullable[null] ?? "fallback");
+            System.Console.WriteLine(unwrap_or(nullable[null], "fallback"));
 
             Indexers.Trace.Receiver()[Indexers.Trace.First(), Indexers.Trace.Second()] += Indexers.Trace.Right();
             System.Console.WriteLine(Indexers.Trace.Sequence);
@@ -4038,7 +4038,7 @@ fn clr_argument_contracts_refine_branches_and_normal_returns() {
             if reader.TryRead(true, out text) && text != "" { show(text); }
             let missing: string?;
             if !Contracts.Branch.TryRead(false, out missing) {
-                System.Console.WriteLine(missing ?? "absent");
+                System.Console.WriteLine(unwrap_or(missing, "absent"));
             }
             let generic: string?;
             if Contracts.Branch.TryReadGeneric(true, "generic", out generic) { show(generic); }
@@ -4166,7 +4166,7 @@ fn clr_conditional_return_nullability_uses_the_actual_argument() {
         None,
     );
     let source = r#"
-        fn display(value: Option<string>) -> string { value ?? "absent" }
+        fn display(value: Option<string>) -> string { unwrap_or(value, "absent") }
         fn refined(value: string?) -> string {
             if value != null { Contracts.Conditional.Echo(value) } else { "fallback" }
         }
@@ -4288,7 +4288,7 @@ fn clr_input_nullability_contracts_control_calls_and_writes() {
         None,
     );
     let source = r#"
-        fn display(value: Option<string>) -> string { value ?? "absent" }
+        fn display(value: Option<string>) -> string { unwrap_or(value, "absent") }
         fn forward<T>(value: T) -> string { Contracts.Inputs.Generic::<T>(value) }
         fn main() {
             let absent: Option<string> = Option.None;
@@ -4432,7 +4432,7 @@ fn clr_read_nullability_contracts_apply_after_generic_substitution() {
         None,
     );
     let source = r#"
-        fn unwrap(value: Option<string>) -> string { value ?? "missing" }
+        fn unwrap(value: Option<string>) -> string { unwrap_or(value, "missing") }
         fn default_number<T: struct>() -> T { Contracts.Lookup.DefaultNumber::<T>() }
         fn main() {
             let packet = new Contracts.Packet<string>();
@@ -4457,9 +4457,9 @@ fn clr_read_nullability_contracts_apply_after_generic_substitution() {
             let number = Contracts.Lookup.Number();
             System.Console.WriteLine(numeric + number.Value);
             let array: Option<string?[]> = Contracts.Lookup.MaybeArray();
-            System.Console.WriteLine((array ?? [null])[0] ?? "array absent");
+            System.Console.WriteLine(unwrap_or((unwrap_or_else(array, { [null] }))[0], "array absent"));
             let present_array: string?[] = Contracts.Lookup.PresentArray();
-            System.Console.WriteLine(present_array[0] ?? "element absent");
+            System.Console.WriteLine(unwrap_or(present_array[0], "element absent"));
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -4538,7 +4538,7 @@ fn exchanges_clr_vectors_and_nullable_annotations_with_csharp() {
             System.Console.WriteLine(first(Arrays.Vectors.Echo([4, 8])));
             System.Console.WriteLine(Arrays.Vectors.Words()[0]);
             System.Console.WriteLine(Arrays.Vectors.Grid()[1][1]);
-            System.Console.WriteLine((Arrays.Vectors.Maybe() ?? [null])[0] ?? "empty");
+            System.Console.WriteLine(unwrap_or((unwrap_or_else(Arrays.Vectors.Maybe(), { [null] }))[0], "empty"));
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -4557,7 +4557,7 @@ fn exchanges_clr_vectors_and_nullable_annotations_with_csharp() {
     for (source, code) in [
         ("fn main() { Arrays.Vectors.Maybe()[0]; }", "E0311"),
         (
-            "fn main() { let words: string[] = Arrays.Vectors.Maybe() ?? [null]; }",
+            "fn main() { let words: string[] = unwrap_or_else(Arrays.Vectors.Maybe(), { [null] }); }",
             "E0301",
         ),
         ("fn main() { Arrays.Vectors.Words()[0] = null; }", "E0301"),
@@ -4711,7 +4711,7 @@ fn clr_structs_preserve_copy_mutation_and_generic_dispatch() {
             let boxed_cell: object = original;
             System.Console.WriteLine((boxed_cell as Interop.Cell<i32>).Stored);
             System.Console.WriteLine(Interop.Api.Text().Item);
-            System.Console.WriteLine(Interop.Api.NullableText().Item ?? "empty");
+            System.Console.WriteLine(unwrap_or(Interop.Api.NullableText().Item, "empty"));
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -4799,8 +4799,8 @@ fn nullable_values_cross_csharp_generic_signatures() {
         fn main() {
             let result = Optional.Api.Describe(Optional.Api.Read(true));
             System.Console.WriteLine(result.Value);
-            System.Console.WriteLine(expose(result) ?? -1);
-            System.Console.WriteLine(Optional.Api.ReadLabel(null, null) ?? "empty");
+            System.Console.WriteLine(unwrap_or(expose(result), -1));
+            System.Console.WriteLine(unwrap_or(Optional.Api.ReadLabel(null, null), "empty"));
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -4950,7 +4950,7 @@ fn collection_loops_use_typed_interfaces_and_dispose_on_exit() {
                 break;
             }
             System.Console.WriteLine(first::<i32, Fixture.Sequence>(Fixture.Sequence.Open(), -1));
-            System.Console.WriteLine(propagate(Option.None) ?? -1);
+            System.Console.WriteLine(unwrap_or(propagate(Option.None), -1));
             try {
                 for value in Fixture.Sequence.Open() { throw new System.FormatException(); }
             } catch (_: System.FormatException) {}
@@ -4959,7 +4959,7 @@ fn collection_loops_use_typed_interfaces_and_dispose_on_exit() {
             let text = new System.Collections.Generic.List<string?>();
             text.Add(null);
             text.Add("text");
-            for item in text { System.Console.WriteLine(item ?? "empty"); }
+            for item in text { System.Console.WriteLine(unwrap_or(item, "empty")); }
         }
         "#,
     )

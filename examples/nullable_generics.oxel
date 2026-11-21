@@ -7,8 +7,8 @@ fn main() {
     messages.Add(null);
     messages.Add("ready");
 
-    System.Console.WriteLine(identity(messages[0]) ?? "missing");
-    System.Console.WriteLine(messages[1] ?? "missing");
+    System.Console.WriteLine(unwrap_or(identity(messages[0]), "missing"));
+    System.Console.WriteLine(unwrap_or(messages[1], "missing"));
 
     let empty = System.Array.Empty::<string?>();
     System.Console.WriteLine(empty.Length);

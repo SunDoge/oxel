@@ -64,7 +64,9 @@ fn existing(frame: Frame, key: string) -> Control? {
 }
 
 fn text(frame: Frame, key: string, value: string) {
-    let label = existing(frame, key) as? TextBlock ?? new TextBlock();
+    let label = unwrap_or_else(existing(frame, key) as? TextBlock, {
+        new TextBlock()
+    });
     if !System.String.Equals(label.Name, key) {
         label.Name = key;
         label.FontSize = 28.0;
@@ -76,7 +78,9 @@ fn text(frame: Frame, key: string, value: string) {
 }
 
 fn row(frame: Frame, key: string, view: Action<Frame>) {
-    let panel = existing(frame, key) as? StackPanel ?? new StackPanel();
+    let panel = unwrap_or_else(existing(frame, key) as? StackPanel, {
+        new StackPanel()
+    });
     if !System.String.Equals(panel.Name, key) {
         panel.Name = key;
         panel.Orientation = Orientation.Horizontal;
@@ -87,7 +91,9 @@ fn row(frame: Frame, key: string, view: Action<Frame>) {
 }
 
 fn button(frame: Frame, key: string, caption: string, enabled: bool, click: Action) {
-    let control = existing(frame, key) as? Button ?? new Button();
+    let control = unwrap_or_else(existing(frame, key) as? Button, {
+        new Button()
+    });
     if !System.String.Equals(control.Name, key) {
         control.Name = key;
         control.MinHeight = 44.0;

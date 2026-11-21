@@ -4864,9 +4864,6 @@ impl<'a, 'src> Checker<'a, 'src> {
             let rhs = self.expression(right, Some(Type::I32))?;
             return self.binary_operands(op, lhs, rhs);
         }
-        if matches!(op, Coalesce) {
-            return self.coalesce(left, right, expected);
-        }
         if matches!(op, Eq | Ne) {
             let reference = match (&left.kind, &right.kind) {
                 (Expression::Null, _) => Some(right),
@@ -5049,6 +5046,15 @@ impl<'a, 'src> Checker<'a, 'src> {
             }
         }
         let (target, args, result) = match path.segments.as_slice() {
+            [("unwrap_or" | "unwrap_or_else", _)] if named_function.is_none() => {
+                return self.fallback_call(
+                    path.span,
+                    type_arguments,
+                    args,
+                    expected,
+                    raw == "unwrap_or",
+                );
+            }
             [("assert", _)] if named_function.is_none() => {
                 return self.assertion(path.span, type_arguments, args);
             }
@@ -5453,6 +5459,25 @@ impl<'a, 'src> Checker<'a, 'src> {
     ) -> Checked<(ExprKind, Type)> {
         if receiver.ty == Type::Never {
             return Ok((receiver.kind, receiver.ty));
+        }
+        if matches!(method, "unwrap_or" | "unwrap_or_else")
+            && self.standard_carrier_payload(receiver.ty).is_some()
+        {
+            if !type_arguments.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0205",
+                    span,
+                    format!("{method} does not accept explicit type arguments"),
+                ));
+            }
+            let [fallback] = args else {
+                return Err(Diagnostic::new(
+                    "E0205",
+                    span,
+                    format!("{method} expects one fallback argument"),
+                ));
+            };
+            return self.value_fallback(span, receiver, fallback, None, method == "unwrap_or");
         }
         self.require_nonnull_receiver(receiver.ty, span)?;
         let owner = describe_scoped(self.types, self.type_parameters, receiver.ty);

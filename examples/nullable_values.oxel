@@ -1,9 +1,13 @@
 fn with_default<T: struct>(value: T?, fallback: T) -> T {
-    value ?? fallback
+    unwrap_or(value, fallback)
 }
 
 fn lookup(found: bool) -> i32? {
-    if found { 30 } else { null }
+    if found {
+        30
+    } else {
+        null
+    }
 }
 
 fn main() {

@@ -352,7 +352,7 @@ Use `value as? T` to get a standard `Option<T>` from a CLR runtime type check. I
 
 ## Nullable references
 
-Reference annotations such as `string`, `object` and imported CLR class names reject source `null` by default. Add `?` when a binding, parameter, result or field can hold null. A non-null reference can widen to its nullable type. Use `??` to supply a fallback. It evaluates the left operand once and evaluates the right operand only when needed. The fallback must fit the underlying reference type, and a nullable fallback keeps the result nullable.
+Reference annotations such as `string`, `object` and imported CLR class names reject source `null` by default. Add `?` when a binding, parameter, result or field can hold null. A non-null reference can widen to its nullable type. Use `unwrap_or(value, fallback)` to supply a fallback. A nullable fallback keeps the result nullable. Use `unwrap_or_else(value, { ... })` to evaluate the fallback only when needed.
 
 Comparisons with `null` refine immutable locals and parameters in `if` and `while` branches and through short-circuit boolean expressions. Mutable bindings require an explicit fallback or a checked immutable copy. A cast from a nullable reference to another reference keeps the destination nullable. [Runnable example](examples/nullable.oxel)
 
@@ -378,7 +378,7 @@ Oxel also reads `DoesNotReturnIf` on CLR boolean parameters. For example, if `Re
 
 ## Nullable values
 
-With `--framework`, a suffix on a non-nullable value type such as `i32?` constructs the CLR type `System.Nullable<i32>`. Use `null` for an empty value and a value of the underlying type for a present value. This applies to CLR enums, structs and generic type parameters constrained to `struct`. Use `value != null`, `value.HasValue`, or `value ?? fallback` to handle absence. An explicit unwrap with `as` or `.Value` throws if the value is empty. An empty nullable value boxes to `null`, so a direct boxing conversion requires `object?`. [Nullable value example](examples/nullable_values.oxel) · [CLR nullable value types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/nullable-value-types)
+With `--framework`, a suffix on a non-nullable value type such as `i32?` constructs the CLR type `System.Nullable<i32>`. Use `null` for an empty value and a value of the underlying type for a present value. This applies to CLR enums, structs and generic type parameters constrained to `struct`. Use `value != null`, `value.HasValue`, or `unwrap_or(value, fallback)` to handle absence. An explicit unwrap with `as` or `.Value` throws if the value is empty. An empty nullable value boxes to `null`, so a direct boxing conversion requires `object?`. [Nullable value example](examples/nullable_values.oxel) · [CLR nullable value types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/nullable-value-types)
 
 ```sh
 oxel run --framework examples/nullable_values.oxel
@@ -498,7 +498,11 @@ The two `Result` types may have different success types. The input error must be
 
 The standard `Option<T>` enum provides `Option.Some(value)` and `Option.None`. Supply the element type through a typed context or use an explicit constructor such as `Option.Some::<i32>(42)`. The `?` operator yields the `Some` payload or returns `None` from the enclosing function or nearest try block. An Option try block wraps its successful tail in `Some`. Each try block uses one enum family, inferred from its operands or supplied by its expected type. Nest try blocks to use both families in a single expression. Existing modules can still declare their own `Option`. [Option example](examples/option_try.oxel)
 
-A direct CLR method, property, field or indexer read in a `let` initializer infers `Option<T>` when the result is nullable. A nullable reference or `System.Nullable<T>` also converts to the standard `Option` when an argument or result expects it. An absent CLR value becomes `None`, and a present value becomes `Some(value)`. Use `Option<T>` in Oxel signatures and an explicit annotation such as `let name: string? = ...` to select the underlying CLR type. The postfix `?` can propagate `None` directly from a nullable CLR call, including `(System.Array.Find(names) |name| { name == target })?`. The input expression is evaluated once. Use `match` to handle both cases or `option ?? fallback` to supply a value on `None`. Use `oxel run --framework examples/clr_option.oxel` to try these forms. [CLR Option example](examples/clr_option.oxel)
+A direct CLR method, property, field or indexer read in a `let` initializer infers `Option<T>` when the result is nullable. A nullable reference or `System.Nullable<T>` also converts to the standard `Option` when an argument or result expects it. An absent CLR value becomes `None`, and a present value becomes `Some(value)`. Use `Option<T>` in Oxel signatures and an explicit annotation such as `let name: string? = ...` to select the underlying CLR type. The postfix `?` can propagate `None` directly from a nullable CLR call, including `(System.Array.Find(names) |name| { name == target })?`. The input expression is evaluated once. Use `match` to handle both cases or `option.unwrap_or(fallback)` to supply a value on `None`. Use `oxel run --framework examples/clr_option.oxel` to try these forms. [CLR Option example](examples/clr_option.oxel)
+
+The standard `Option<T>` and `Result<T, E>` offer `value.unwrap_or(default)` and `value.unwrap_or_else({ ... })`. Both return the success value when present and the fallback on `None` or `Err`. Use `match` to read a `Result`'s error value. The free forms `unwrap_or(value, default)` and `unwrap_or_else(value, { ... })` also accept nullable CLR references and `System.Nullable<T>`. Both forms evaluate the input once. `unwrap_or` evaluates the fallback after the input, including when it already contains a value. `unwrap_or_else` evaluates its fallback expression or block only on absence or error. A fallback block follows the surrounding function's control-flow rules.
+
+Use these calls in place of the previous `??` operator. The postfix `?` continues to propagate failure.
 
 In the other direction, an expected CLR nullable type with the same underlying type accepts a standard `Option<T>`. For example, pass an `Option<string>` directly to a `string?` argument or write it to an element of `List<string?>`. A value of `None` produces a null reference or an empty `System.Nullable<T>`. A value of `Some(0)` produces a populated nullable integer containing zero. Use an explicit cast such as `choice as string?` to select the CLR type at an overloaded call. An exact nullable conversion takes precedence over boxing the option when overloads require the same number of conversions. Managed `ref` and `out` parameters require a local of the CLR storage type. [CLR nullable values](https://learn.microsoft.com/en-us/dotnet/api/system.nullable-1?view=net-10.0)
 
@@ -611,7 +615,7 @@ Integer addition, subtraction, multiplication and negation wrap at the type's wi
 
 [Runnable constants example](examples/constants.oxel)
 
-A `string?` constant can hold a string or `null`. Use `const LABEL: string? = null;` to give an absent value its type. Compile-time code can compare nullable strings with `null`, choose a lazy fallback with `??`, and convert between `string?` and `Option<string>` through a typed binding or return. A null interpolated part contributes empty text, as it does at runtime.
+A `string?` constant can hold a string or `null`. Use `const LABEL: string? = null;` to give an absent value its type. Compile-time code can compare nullable strings with `null`, choose a lazy fallback with `unwrap_or_else`, and convert between `string?` and `Option<string>` through a typed binding or return. A null interpolated part contributes empty text, as it does at runtime.
 
 ### Comptime functions
 

@@ -11,5 +11,7 @@ fn main() {
     let present: string? = "oxel";
     System.Console.WriteLine(display(missing));
     System.Console.WriteLine(display(present));
-    System.Console.WriteLine(missing ?? present ?? "fallback");
+    System.Console.WriteLine(unwrap_or_else(missing, {
+        unwrap_or(present, "fallback")
+    }));
 }

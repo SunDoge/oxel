@@ -79,13 +79,13 @@ use System::{Console, Environment, Exception, Func};
 
 fn main(args: string[]) -> i32 {
     assert(args[0] == "forwarded");
-    let directory = Environment.GetEnvironmentVariable("OXEL_RELOAD_DIRECTORY") ?? throw new Exception("Missing reload directory");
+    let directory = unwrap_or_else(Environment.GetEnvironmentVariable("OXEL_RELOAD_DIRECTORY"), { throw new Exception("Missing reload directory") });
     Console.WriteLine(directory);
     let mut seen = reload_generation(directory);
     let mut view = load_view::<Func<i32, i32>>(directory, seen, "Tests.ReloadView.Program", "update");
     let mut count = 0;
     while let Some(line) = Console.ReadLine() {
-        let generation = try_reload_generation(directory) ?? seen;
+        let generation = unwrap_or_else(try_reload_generation(directory), { seen });
         if generation != seen {
             seen = generation;
             try {

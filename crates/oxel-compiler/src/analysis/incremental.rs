@@ -415,7 +415,7 @@ mod tests {
         let mut compiler = ProjectCompiler::new(AssemblyKind::Library, &references);
         let mut sources: [Arc<str>; 2] = [
             "const VALUE = 4; fn edited() -> i32 { VALUE }".into(),
-            "fn uses_option() -> i32 { let value: Option<i32[]> = Option.Some([42]); (value ?? [0])[0] } fn uses_result() -> i32 { let value: Result<i32, string> = Result.Ok(42); match value { Ok(n) => n, Err(_) => 0 } }".into(),
+            "fn uses_option() -> i32 { let value: Option<i32[]> = Option.Some([42]); unwrap_or_else(value, { [0] })[0] } fn uses_result() -> i32 { let value: Result<i32, string> = Result.Ok(42); match value { Ok(n) => n, Err(_) => 0 } }".into(),
         ];
         same_image(&mut compiler, &sources);
         sources[0] = "const VALUE = 4; fn edited() -> i32 { VALUE + 1 }".into();

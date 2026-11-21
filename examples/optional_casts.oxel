@@ -13,8 +13,8 @@ fn load() -> object {
 }
 
 fn main() {
-    System.Console.WriteLine(next(load()) ?? 0);
-    System.Console.WriteLine(read::<string>("oxel") ?? "missing");
-    System.Console.WriteLine((29 as? i64) ?? 0);
-    System.Console.WriteLine((null as? string) ?? "missing");
+    System.Console.WriteLine(unwrap_or(next(load()), 0));
+    System.Console.WriteLine(unwrap_or(read::<string>("oxel"), "missing"));
+    System.Console.WriteLine(unwrap_or((29 as? i64), 0));
+    System.Console.WriteLine(unwrap_or((null as? string), "missing"));
 }

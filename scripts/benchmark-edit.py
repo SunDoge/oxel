@@ -120,15 +120,25 @@ def measure_oxel(directory, cli, iterations):
         '[package]\nname = "edit_host"\nframework = true\nsources = ["main.oxel", "loader.oxel"]\n'
     )
     (directory / "loader.oxel").write_bytes((ROOT / "examples/hot_reload/loader.oxel").read_bytes())
+    # Use syntax shared by the current and previous CLI when comparing builds.
     (directory / "main.oxel").write_text('''
 use System::{Console, Environment, Func, InvalidOperationException};
 use System::Threading::Thread;
 
 fn main() {
-    let directory = Environment.GetEnvironmentVariable("OXEL_RELOAD_DIRECTORY") ?? throw new InvalidOperationException("No reload directory");
+    let directory: string? = Environment.GetEnvironmentVariable("OXEL_RELOAD_DIRECTORY");
+    let directory = if directory != null {
+        directory
+    } else {
+        throw new InvalidOperationException("No reload directory")
+    };
     let mut seen = "";
     while true {
-        let generation = try_reload_generation(directory) ?? seen;
+        let generation = if let Some(current) = try_reload_generation(directory) {
+            current
+        } else {
+            seen
+        };
         if generation != seen {
             let view = load_view::<Func<i32>>(directory, generation, "Edit.View.Program", "read");
             Console.WriteLine($"VALUE {(view.invoke)()} PID {Environment.ProcessId}");

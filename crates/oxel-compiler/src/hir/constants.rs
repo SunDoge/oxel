@@ -618,7 +618,7 @@ where
         Le => Bool(left <= right),
         Gt => Bool(left > right),
         Ge => Bool(left >= right),
-        And | Or | Coalesce => unreachable!("logical operators lower as branches"),
+        And | Or => unreachable!("logical operators lower as branches"),
         BitAnd | BitOr | BitXor | Shl | Shr => unreachable!("checked floating-point operation"),
     }
 }
@@ -674,7 +674,7 @@ fn integer(
         Le => return Ok(Bool(ty.integer_value(left) <= ty.integer_value(right))),
         Gt => return Ok(Bool(ty.integer_value(left) > ty.integer_value(right))),
         Ge => return Ok(Bool(ty.integer_value(left) >= ty.integer_value(right))),
-        And | Or | Coalesce => unreachable!("logical operators lower as branches"),
+        And | Or => unreachable!("logical operators lower as branches"),
     };
     Ok(ConstValue::Integer(
         wrap_integer(value, references.integer_storage(ty)),

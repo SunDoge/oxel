@@ -1,9 +1,13 @@
 fn find_name(names: string[], target: string) -> Option<string> {
-    System.Array.Find(names) |name| { name == target }
+    System.Array.Find(names) |name| {
+        name == target
+    }
 }
 
 fn find_label(names: string[], target: string) -> Option<string> {
-    let name = (System.Array.Find(names) |candidate| { candidate == target })?;
+    let name = (System.Array.Find(names) |candidate| {
+        candidate == target
+    })?;
     Option.Some($"Found {name}")
 }
 
@@ -19,14 +23,19 @@ fn main() {
     print_name(find_name(names, "Grace"));
     print_name(find_label(names, "Ada"));
     print_name(find_label(names, "Katherine"));
-    if let Some(value) = System.Array.Find(names) |name| { name == "Katherine" } {
+    if let Some(value) = System.Array.Find(names) |name| {
+        name == "Katherine"
+    } {
         System.Console.WriteLine(value);
     } else {
         System.Console.WriteLine("no match");
     }
 
     let mut calls = 0;
-    let number: Option<i32> = { calls += 1; new System.Nullable<i32>(0) };
+    let number: Option<i32> = {
+        calls += 1;
+        new System.Nullable<i32>(0)
+    };
     let empty: Option<i32> = new System.Nullable<i32>();
     match number {
         Some(value) => System.Console.WriteLine(value),
@@ -41,22 +50,33 @@ fn main() {
     let labels = new System.Collections.Generic.List<string?>();
     labels.Add(find_name(names, "Grace"));
     labels.Add(Option.None);
-    System.Console.WriteLine(labels[0] ?? "unexpected");
-    System.Console.WriteLine(labels[1] ?? "empty label");
+    System.Console.WriteLine(unwrap_or(labels[0], "unexpected"));
+    System.Console.WriteLine(unwrap_or(labels[1], "empty label"));
     labels[1] = Option.Some("Ada");
-    System.Console.WriteLine(labels[1] ?? "unexpected");
+    System.Console.WriteLine(unwrap_or(labels[1], "unexpected"));
 
     let values = new System.Collections.Generic.List<i32?>();
-    values.Add({ calls += 1; number });
+    values.Add({
+        calls += 1;
+        number
+    });
     values.Add(empty);
-    System.Console.WriteLine(values[0] ?? 99);
+    System.Console.WriteLine(unwrap_or(values[0], 99));
     System.Console.WriteLine(values[1].HasValue);
     System.Console.WriteLine(calls);
 
     let found = labels[0];
-    let absent = System.Array.Find(names) |name| { name == "Katherine" };
-    System.Console.WriteLine(found ?? { calls += 100; "unexpected" });
-    System.Console.WriteLine(absent ?? { calls += 1; "fallback" });
+    let absent = System.Array.Find(names) |name| {
+        name == "Katherine"
+    };
+    System.Console.WriteLine(found.unwrap_or_else({
+        calls += 100;
+        "unexpected"
+    }));
+    System.Console.WriteLine(absent.unwrap_or_else({
+        calls += 1;
+        "fallback"
+    }));
     System.Console.WriteLine(calls);
 
     let reader = new System.IO.StringReader("first\nsecond");

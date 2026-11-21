@@ -4,7 +4,7 @@ use Microsoft::Data::Sqlite::{SqliteConnection, SqliteConnectionStringBuilder};
 use System::Environment;
 
 fn connection() -> SqliteConnection {
-    let path = Environment.GetEnvironmentVariable("OXEL_SQLITE_PATH") ?? "items.db";
+    let path = unwrap_or(Environment.GetEnvironmentVariable("OXEL_SQLITE_PATH"), "items.db");
     let settings = new SqliteConnectionStringBuilder();
     settings.DataSource = path;
     new SqliteConnection(settings.ConnectionString)

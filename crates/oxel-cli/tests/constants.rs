@@ -472,7 +472,7 @@ fn comptime_aggregates_support_patterns_and_propagation() {
             System.Console.WriteLine(copy.left);
             System.Console.WriteLine(PAIR.left);
             System.Console.WriteLine(runtime_read(ALIAS));
-            System.Console.WriteLine(OPTIONAL ?? 0);
+            System.Console.WriteLine(unwrap_or(OPTIONAL, 0));
         }
     "#;
     fs::write(folder.path().join("aggregates.oxel"), source).unwrap();
@@ -760,9 +760,9 @@ fn generic_comptime_calls_specialize_values_queries_and_memoization() {
         const CASES = cases::<Option<bool>>();
 
         fn main() {
-            System.Console.WriteLine(NUMBER ?? 0);
-            System.Console.WriteLine(TEXT ?? "missing");
-            System.Console.WriteLine(ABSENT ?? true);
+            System.Console.WriteLine(unwrap_or(NUMBER, 0));
+            System.Console.WriteLine(unwrap_or(TEXT, "missing"));
+            System.Console.WriteLine(unwrap_or(ABSENT, true));
             System.Console.WriteLine(FIELD.name);
             System.Console.WriteLine(FIELD.type_name);
             System.Console.WriteLine(NAME);
@@ -824,6 +824,7 @@ fn nullable_string_constants_share_runtime_option_and_fallback_semantics() {
         const RECORD = Label { text: ABSENT };
         const OPTION: Option<string> = PRESENT;
         const EMPTY_OPTION: Option<string> = EMPTY;
+        const EMPTY_TEXT = EMPTY_OPTION.unwrap_or("unexpected");
         const NONE: Option<string> = ABSENT;
         const BACK: string? = NONE;
         const BACK_PRESENT: string? = OPTION;
@@ -831,9 +832,9 @@ fn nullable_string_constants_share_runtime_option_and_fallback_semantics() {
 
         comptime fn score(first: string?, second: string?) -> i32 {
             let mut visits = 0;
-            let picked = { visits += 1; first } ??
-                { visits += 10; second } ??
-                { visits += 100; "fallback" };
+            let picked = unwrap_or_else({ visits += 1; first }, {
+                unwrap_or_else({ visits += 10; second }, { visits += 100; "fallback" })
+            });
             if first != null && first.Length == 0 && null != picked {
                 return visits;
             }
@@ -843,7 +844,7 @@ fn nullable_string_constants_share_runtime_option_and_fallback_semantics() {
         comptime fn from_array(first: string?) -> string {
             let values = new string?[2];
             values[0] = first;
-            values[0] ?? values[1] ?? "empty"
+            unwrap_or_else(values[0], { unwrap_or(values[1], "empty") })
         }
 
         const LAZY = score(EMPTY, PRESENT);
@@ -852,8 +853,8 @@ fn nullable_string_constants_share_runtime_option_and_fallback_semantics() {
         const ARRAY = from_array(ABSENT);
 
         fn main() {
-            System.Console.WriteLine(RECORD.text ?? "missing");
-            System.Console.WriteLine(EMPTY_OPTION ?? "unexpected");
+            System.Console.WriteLine(unwrap_or(RECORD.text, "missing"));
+            System.Console.WriteLine(EMPTY_TEXT);
             System.Console.WriteLine(BACK == null);
             System.Console.WriteLine(EXPANDED);
             System.Console.WriteLine(LAZY);

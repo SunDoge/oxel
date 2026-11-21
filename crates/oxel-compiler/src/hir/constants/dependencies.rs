@@ -80,28 +80,7 @@ impl<'src> Walk<'_, 'src> {
                 }
             }
             Expression::NewArray(_, length) => self.expression(length)?,
-            Expression::Name(path) => {
-                let (name, span) = path.segments[0];
-                if !self.scopes.iter().rev().any(|scope| scope.contains(name)) {
-                    let scopes = &self.context.module.types.scopes;
-                    let constant = (1..=path.segments.len()).find_map(|length| {
-                        scopes.lookup(
-                            self.context.constants,
-                            &path_name(&path.segments[..length]),
-                            span,
-                        )
-                    });
-                    if let Some(&id) = constant {
-                        self.edges.push(id);
-                    } else if path.segments.len() == 1 {
-                        return Err(Diagnostic::new(
-                            "E0203",
-                            span,
-                            format!("unknown constant '{name}'"),
-                        ));
-                    }
-                }
-            }
+            Expression::Name(path) => self.value_path(&path.segments)?,
             Expression::Field(receiver, _, _) => self.expression(receiver)?,
             Expression::Index {
                 receiver,
@@ -154,23 +133,41 @@ impl<'src> Walk<'_, 'src> {
                     .types
                     .scopes
                     .lookup(&module.names, &name, span)
-                    .copied()
-                    .ok_or_else(|| {
-                        if module.types.scopes.expand(&name, span).contains('.') {
-                            self.unsupported(span)
-                        } else {
-                            Diagnostic::new("E0203", span, format!("unknown function '{name}'"))
-                        }
-                    })?;
-                if !module.functions[index].comptime {
-                    return Err(Diagnostic::new(
-                        "E0501",
-                        span,
-                        "constant evaluation can only call comptime functions",
-                    ));
+                    .copied();
+                if let Some(index) = index {
+                    if !module.functions[index].comptime {
+                        return Err(Diagnostic::new(
+                            "E0501",
+                            span,
+                            "constant evaluation can only call comptime functions",
+                        ));
+                    }
+                    self.edges
+                        .push(self.context.constants.len() + index - self.context.first_function);
+                } else if let [receiver @ .., ("unwrap_or" | "unwrap_or_else", _)] =
+                    path.segments.as_slice()
+                {
+                    if !receiver.is_empty() {
+                        self.value_path(receiver)?;
+                    }
+                } else {
+                    return Err(if module.types.scopes.expand(&name, span).contains('.') {
+                        self.unsupported(span)
+                    } else {
+                        Diagnostic::new("E0203", span, format!("unknown function '{name}'"))
+                    });
                 }
-                self.edges
-                    .push(self.context.constants.len() + index - self.context.first_function);
+                for argument in arguments {
+                    self.expression(argument)?;
+                }
+            }
+            Expression::MemberCall {
+                receiver,
+                method: "unwrap_or" | "unwrap_or_else",
+                arguments,
+                ..
+            } => {
+                self.expression(receiver)?;
                 for argument in arguments {
                     self.expression(argument)?;
                 }
@@ -209,6 +206,30 @@ impl<'src> Walk<'_, 'src> {
                 }
             }
             _ => return Err(self.unsupported(expr.span)),
+        }
+        Ok(())
+    }
+
+    fn value_path(&mut self, segments: &[(&str, Span)]) -> Checked<()> {
+        let (name, span) = segments[0];
+        if !self.scopes.iter().rev().any(|scope| scope.contains(name)) {
+            let scopes = &self.context.module.types.scopes;
+            let constant = (1..=segments.len()).find_map(|length| {
+                scopes.lookup(
+                    self.context.constants,
+                    &path_name(&segments[..length]),
+                    span,
+                )
+            });
+            if let Some(&id) = constant {
+                self.edges.push(id);
+            } else if segments.len() == 1 {
+                return Err(Diagnostic::new(
+                    "E0203",
+                    span,
+                    format!("unknown constant '{name}'"),
+                ));
+            }
         }
         Ok(())
     }

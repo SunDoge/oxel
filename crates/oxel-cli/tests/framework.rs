@@ -1385,23 +1385,23 @@ fn nullable_values_use_clr_storage_and_lazy_fallbacks() {
             let some = if true { 30 } else { null };
             let none = new System.Nullable<i32>();
             let mut evals = 0;
-            let present = { evals += 1; some } ?? { evals += 1; 9 };
+            let present = unwrap_or_else({ evals += 1; some }, { evals += 1; 9 });
             System.Console.WriteLine(present);
             System.Console.WriteLine(evals);
-            System.Console.WriteLine(none ?? 20);
+            System.Console.WriteLine(unwrap_or(none, 20));
             System.Console.WriteLine(none.HasValue);
             System.Console.WriteLine(some as i32);
             let list = new System.Collections.Generic.List<i32?>();
             list.Add(null);
             list.Add(10);
-            System.Console.WriteLine(list[0] ?? 25);
+            System.Console.WriteLine(unwrap_or(list[0], 25));
             System.Console.WriteLine(list[1].Value);
             let boxed = box_nullable(none);
             System.Console.WriteLine((boxed as i32?) == null);
             let values = new i32?[2];
             values[1] = 40;
             System.Console.WriteLine(values[0] == null);
-            System.Console.WriteLine(values[1] ?? 0);
+            System.Console.WriteLine(unwrap_or(values[1], 0));
         }
     "#;
     fs::write(project.join("main.oxel"), source).unwrap();
@@ -1581,7 +1581,7 @@ fn clr_typed_catches_restore_pending_operands_and_match_in_order() {
             let input: Option<i32> = Option.None;
             let recovered = try {
                 let fallback: Option<i32> = try { input? };
-                fallback ?? 11
+                unwrap_or(fallback, 11)
             } catch (_: System.Exception) { 0 };
             System.Console.WriteLine(recovered);
         }
@@ -1672,7 +1672,7 @@ fn disposable_using_cleans_up_on_every_clr_control_transfer() {
                 acquired += 1;
                 normal
             } {
-                (resource.ReadLine() ?? "").Length
+                (unwrap_or(resource.ReadLine(), "")).Length
             };
             System.Console.WriteLine(length);
             System.Console.WriteLine(acquired);
@@ -1683,7 +1683,7 @@ fn disposable_using_cleans_up_on_every_clr_control_transfer() {
             System.Console.WriteLine(disposed(returning));
 
             let empty = new System.IO.StringReader("");
-            System.Console.WriteLine(propagate(empty) ?? "empty");
+            System.Console.WriteLine(unwrap_or(propagate(empty), "empty"));
             System.Console.WriteLine(disposed(empty));
 
             let raising = new System.IO.StringReader("open");
@@ -1728,7 +1728,7 @@ fn disposable_using_cleans_up_on_every_clr_control_transfer() {
 
             let attempt_reader = new System.IO.StringReader("try");
             let missing: Option<i32> = Option.None;
-            let sum = add(12, (try { using resource = attempt_reader { missing? } }) ?? 18);
+            let sum = add(12, unwrap_or((try { using resource = attempt_reader { missing? } }), 18));
             System.Console.WriteLine(sum);
             System.Console.WriteLine(disposed(attempt_reader));
         }
@@ -1855,7 +1855,7 @@ fn async_using_keeps_resources_alive_and_disposes_on_each_exit() {
             gate.SetResult(0);
             assert(reading.await == 131);
             assert(failing.await == 30);
-            assert((propagating.await ?? 42) == 42);
+            assert((unwrap_or(propagating.await, 42)) == 42);
             loop_exit.await;
             assert(enumerating.await == 30);
             assert(closed(outer) && closed(inner) && closed(missing) && closed(breaking));

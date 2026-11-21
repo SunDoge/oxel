@@ -12,6 +12,7 @@
 - Build and run framework-only projects directly from an installed targeting pack and reuse content-addressed native libraries during repeated runs.
 - Use generic `async fn` declarations, await inside struct field initializers, and run `#[test] async fn` tests through the normal test runner.
 - Organize source files with explicit `namespace` declarations and import individual names or aliases with `use`. Library namespaces map to CLR namespaces.
+- Use explicit `unwrap_or` and `unwrap_or_else` calls for fallbacks on `Option`, `Result`, and nullable CLR values. The old `??` syntax now reports a migration diagnostic.
 - The language includes CLR-compatible primitive types and generics, immutable bindings, value types with field updates and destructuring, discriminated unions, exhaustive matching, `Option` and `Result` propagation, typed CLR exception handlers, and `using` for scoped resources.
 - Use `as?` to check a CLR object's runtime type and get an `Option`. A null reference or mismatched type becomes `None`.
 - CLR metadata resolution supports framework and NuGet references, local assemblies, collections, delegates and events. The compiler evaluates constants and supported `comptime fn` bodies in Rust.

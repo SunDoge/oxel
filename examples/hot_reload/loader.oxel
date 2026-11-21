@@ -30,8 +30,18 @@ fn load_view<T: Delegate>(directory: string, generation: string, type_name: stri
         let assembly = using stream = new MemoryStream(File.ReadAllBytes(Path.Combine(directory, $"{generation}.dll"))) {
             context.LoadFromStream(stream)
         };
-        let ty = assembly.GetType(type_name) ?? throw new InvalidOperationException($"Missing reload type {type_name}");
-        let method = ty.GetMethod(method_name) ?? throw new InvalidOperationException($"Missing reload method {method_name}");
+        let ty: System.Type? = assembly.GetType(type_name);
+        let ty = if ty != null {
+            ty
+        } else {
+            throw new InvalidOperationException($"Missing reload type {type_name}")
+        };
+        let method: System.Reflection.MethodInfo? = ty.GetMethod(method_name);
+        let method = if method != null {
+            method
+        } else {
+            throw new InvalidOperationException($"Missing reload method {method_name}")
+        };
         LoadedView::<T> { context: context, invoke: method.CreateDelegate::<T>() }
     } catch (error: Exception) {
         context.Unload();
