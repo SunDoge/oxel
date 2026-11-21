@@ -22,6 +22,7 @@
 - Format project sources and tests with `oxel fmt`. Use `oxel fmt --check` to check formatting without modifying files.
 - Use the standard `Result<T, E>` without declaring a result enum in each module. Existing module definitions still resolve locally.
 - Use scoped `using` and disposable CLR enumerators inside async functions.
+- Call ONNX Runtime directly from Oxel and use CLR APIs that accept read-only collection interfaces or unmanaged scalar type arguments. The inference example compares C# results and tests local NuGet installation.
 - Run the SQLite Minimal API example to verify NuGet packaging and persistence across restarts.
 - Build with `--debug` to embed source line information for CoreCLR stack traces and Zed breakpoints.
 - The language server formats open documents with the same formatter as `oxel fmt`.

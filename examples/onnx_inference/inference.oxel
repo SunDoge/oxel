@@ -1,0 +1,12 @@
+use Microsoft::ML::OnnxRuntime::{InferenceSession, OrtValue, RunOptions};
+
+fn predict(session: InferenceSession, options: RunOptions, input: f32[]) -> f32[] {
+    let shape: i64[] = [3];
+    let output = new f32[3];
+    using input_tensor = OrtValue.CreateTensorValueFromMemory::<f32>(input, shape) {
+        using output_tensor = OrtValue.CreateTensorValueFromMemory::<f32>(output, shape) {
+            session.Run(options, ["input"], [input_tensor], ["output"], [output_tensor]);
+        }
+    }
+    output
+}

@@ -1,0 +1,7 @@
+[package]
+name = "onnx-inference"
+sources = ["main.oxel", "inference.oxel"]
+framework = true
+
+[nuget]
+"Microsoft.ML.OnnxRuntime" = "1.23.2"

@@ -1,3 +1,5 @@
 target/
 /examples/interop/bin/
 /examples/interop/obj/
+/examples/onnx_inference/reference/bin/
+/examples/onnx_inference/reference/obj/

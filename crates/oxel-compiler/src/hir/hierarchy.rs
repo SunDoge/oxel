@@ -50,6 +50,12 @@ impl Structs<'_, '_> {
     }
 
     pub(super) fn upcasts(&self, actual: Type, expected: Type) -> bool {
+        if !actual.is_nullable()
+            && let Some(actual_element) = self.array_element(actual)
+            && let Some(expected_element) = self.read_only_array_interface_element(expected)
+        {
+            return self.array_interface_element_matches(actual_element, expected_element);
+        }
         if matches!(actual, Type::Struct(_) | Type::ConstructedStruct(_))
             && (expected.external_reference() || matches!(expected, Type::Interface(_)))
         {
@@ -76,6 +82,45 @@ impl Structs<'_, '_> {
             remaining: 32_768,
         };
         check.variant_conversion(actual, expected, target, 0)
+    }
+
+    fn read_only_array_interface_element(&self, ty: Type) -> Option<Type> {
+        let Type::ConstructedExternal(id) = ty else {
+            return None;
+        };
+        let instance = self.instance(id);
+        let InstanceKind::External(definition) = instance.kind else {
+            return None;
+        };
+        let interface = self.references.imported_type(definition);
+        if self.references.is_framework_type(definition)
+            && interface.is_interface
+            && interface.namespace == "System.Collections.Generic"
+            && matches!(
+                interface.name.as_str(),
+                "IEnumerable`1" | "IReadOnlyCollection`1" | "IReadOnlyList`1"
+            )
+            && let [element] = *instance.arguments
+        {
+            Some(element)
+        } else {
+            None
+        }
+    }
+
+    fn array_interface_element_matches(&self, actual: Type, expected: Type) -> bool {
+        if actual == expected {
+            return true;
+        }
+        if !actual.reference()
+            || !expected.reference()
+            || actual.is_nullable() && !expected.is_nullable()
+        {
+            return false;
+        }
+        let actual = actual.non_nullable();
+        let expected = expected.non_nullable();
+        actual == expected || expected == Type::Object || self.upcasts(actual, expected)
     }
 
     pub(super) fn stack_only(&self, ty: Type) -> bool {

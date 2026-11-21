@@ -3198,6 +3198,9 @@ fn validates_clr_generic_constraints_across_languages() {
             System.Console.WriteLine(keep_reference("reference").Read());
             System.Console.WriteLine(reference(ReferenceOption.Some::<string>("present")));
             System.Console.WriteLine(via_imported_factory::<Bound.Good>().Tag());
+            let raw = new Bound.Raw<i32>();
+            let single: f32 = 1.5;
+            System.Console.WriteLine(Bound.Api.Unmanaged(single) == single);
         }
     "#;
     fs::write(cwd.join("main.oxel"), source).unwrap();
@@ -3253,6 +3256,7 @@ fn validates_clr_generic_constraints_across_languages() {
             "reference",
             "present",
             "25",
+            "True",
         ],
     );
 
@@ -3314,9 +3318,9 @@ fn validates_clr_generic_constraints_across_languages() {
             "class",
         ),
         (
-            "fn main() { let x: Bound.Raw<i32>; }",
-            "E0211",
-            "unsupported",
+            "struct Text { name: string } fn main() { let x: Bound.Raw<Text>; }",
+            "E0212",
+            "unmanaged",
         ),
         (
             "fn main() { let x: Bound.Dependent<string, i32>; }",
@@ -3481,9 +3485,9 @@ fn validates_clr_generic_constraints_across_languages() {
             "class",
         ),
         (
-            "fn main() { Bound.Api.Unmanaged(1); }",
-            "E0203",
-            "Unmanaged",
+            "struct Text { name: string } fn main() { Bound.Api.Unmanaged(Text { name: \"managed\" }); }",
+            "E0212",
+            "unmanaged",
         ),
     ] {
         let errors = oxel::check_with_references(invalid, &references).unwrap_err();

@@ -176,6 +176,7 @@ impl Structs<'_, '_> {
         match kind {
             TypeBoundKind::Reference => "class".into(),
             TypeBoundKind::Value => "struct".into(),
+            TypeBoundKind::Unmanaged => "unmanaged".into(),
             TypeBoundKind::Constructor => "new()".into(),
             TypeBoundKind::Target(target) => describe_scoped(self, parameters, target),
         }
@@ -214,6 +215,12 @@ impl Structs<'_, '_> {
             TypeBoundKind::Value => {
                 (value && self.nullable_underlying(actual).is_none())
                     || declared(TypeBoundKind::Value)
+            }
+            TypeBoundKind::Unmanaged => {
+                actual.scalar()
+                    || actual.native_word()
+                    || matches!(actual, Type::ClrEnum(_))
+                    || declared(TypeBoundKind::Unmanaged)
             }
             TypeBoundKind::Constructor => {
                 actual.scalar()

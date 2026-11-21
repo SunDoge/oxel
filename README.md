@@ -40,6 +40,25 @@ oxel run examples/arguments.oxel -- "two words" --flag
 
 With plain source files or local DLL references, the runtime configuration targets .NET 10 and allows roll-forward to the next installed major version. Framework references and NuGet dependencies use the selected SDK's target framework. Parsing, semantic analysis and assembly generation run in Rust. [Microsoft .NET version selection](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
 
+### ONNX Runtime inference example
+
+The [ONNX inference example](examples/onnx_inference) calls the CPU `Microsoft.ML.OnnxRuntime` NuGet package directly from Oxel. The checked-in model computes `2 * input + 1` for a three-element `f32` tensor. The script reuses one inference session and run-options object across two inputs. It passes a preallocated output array to ONNX Runtime and uses scoped `using` blocks for the session and tensors. [ONNX Runtime C# documentation](https://onnxruntime.ai/docs/get-started/with-csharp.html)
+
+Use a .NET 10 SDK and runtime with the checked-in lock file.
+
+```sh
+oxel run --locked --manifest-path examples/onnx_inference/oxel.toml -- examples/onnx_inference/affine.onnx
+dotnet run --project examples/onnx_inference/reference -- examples/onnx_inference/affine.onnx
+```
+
+Both programs print `3`, `5`, `7`, `-3`, `1`, and `9` on separate lines. The opt-in integration test compares their output, builds the Oxel inference function as a library, and runs it from a C# project that installs a locally packed NuGet package.
+
+```sh
+cargo test --locked --test onnx -- --ignored
+```
+
+Regenerate the fixture with `uv run --no-project --python 3.12 --with onnx==1.19.1 python examples/onnx_inference/generate_model.py`.
+
 ### HTTP server example
 
 The [HTTP server](examples/http_server.oxel) uses the .NET SDK's framework references and serves one request at a time on the IPv4 loopback address. Start it in one terminal and send requests from another.
@@ -369,7 +388,7 @@ oxel run --framework examples/nullable_values.oxel
 
 `T[]` is a CLR zero-based vector. Use `[10, 20]` to initialize its elements, or `new i32[count]` to allocate zero-initialized storage. A typed context supplies the element type for a literal, including an empty literal such as `let empty: i32[] = [];`. Otherwise the first element supplies the type. Use `.Length` for the length and an `i32` index for reads and writes. A compound update such as `values[i] += 2` evaluates the array and index once.
 
-Nullability is independent at each level. `string?[]` has nullable elements and `string[]?` is a nullable array with non-nullable elements. Use a literal for non-nullable reference elements, or `new string?[count]` for storage initialized to null. Length allocation requires an element type with a valid zero value. Jagged vectors use nested array types such as `i32[][]`.
+Nullability is independent at each level. `string?[]` has nullable elements and `string[]?` is a nullable array with non-nullable elements. Use a literal for non-nullable reference elements, or `new string?[count]` for storage initialized to null. Length allocation requires an element type with a valid zero value. Jagged vectors use nested array types such as `i32[][]`. Arrays implicitly convert to the CLR interfaces `IEnumerable<T>`, `IReadOnlyCollection<T>`, and `IReadOnlyList<T>` with matching element types or compatible reference element types.
 
 The standard `Option<T>` treats zero-initialized CLR storage as `None`, including `new Option<string>[count]` and arrays of Oxel structs whose fields all have valid zero values. A `Some` payload is read only after the option's tag identifies a present value. This behavior also applies in `comptime fn`. [Option array example](examples/option_arrays.oxel)
 
@@ -761,7 +780,7 @@ Variance also respects nullable annotations. For example, `IReadCell<string>` ca
 
 Use `Namespace.Cell::<i32>.From(30)` to call a static method on a constructed generic class, and `Namespace.CellDefaults::<i32>.Initial` to read or assign a static property. The declaring type and a generic method take separate argument lists, as in `CellDefaults::<i64>.Choose::<bool>(30, true)`. Method type arguments can also be inferred. Each closed CLR type has its own static storage. [Static members on generic types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/static)
 
-Imported generic types and methods support the CLR constraints for reference types (`class`), non-nullable value types (`struct`), public parameterless construction (`new()`), and imported base classes or interfaces. A constraint can name a constructed type, such as `ICompare<T>`, or another type parameter, such as `where T : U`. The compiler substitutes both declaring-type and method type arguments before checking the constraint. An oxel function can forward a type parameter when its own declared bounds imply the imported constraint. Oxel checks imported reference-type constraints as non-nullable. C#-specific `unmanaged`, `notnull` and `class?` constraint handling is future work. [CLR generic parameter constraints](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters)
+Imported generic types and methods support the CLR constraints for reference types (`class`), non-nullable value types (`struct`), public parameterless construction (`new()`), and imported base classes or interfaces. A constraint can name a constructed type, such as `ICompare<T>`, or another type parameter, such as `where T : U`. The compiler substitutes both declaring-type and method type arguments before checking the constraint. An oxel function can forward a type parameter when its own declared bounds imply the imported constraint. Oxel checks imported reference-type constraints as non-nullable. Imported C# `unmanaged` constraints accept Oxel scalar types, native integers, and CLR enums. Verifying arbitrary struct layouts and handling `notnull` and `class?` are future work. [CLR generic parameter constraints](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters)
 
 The [interop example](examples/interop/main.oxel) builds a C# library and uses its constructors, properties, overloaded instance methods and interface dispatch from oxel.
 

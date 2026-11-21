@@ -1881,3 +1881,55 @@ fn async_using_keeps_resources_alive_and_disposes_on_each_exit() {
         "disposed\n"
     );
 }
+
+#[test]
+fn arrays_upcast_to_read_only_clr_collections_without_element_boxing() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let main = project.join("main.oxel");
+    fs::write(
+        &main,
+        r#"
+        use System::Collections::Generic::{IEnumerable, IReadOnlyCollection, IReadOnlyList};
+
+        fn combined(nums: IReadOnlyList<i32>, texts: IReadOnlyCollection<object>) -> i32 {
+            nums[0] + texts.Count
+        }
+
+        fn sum(nums: IEnumerable<i32>) -> i32 {
+            let mut total = 0;
+            for num in nums {
+                total += num;
+            }
+            total
+        }
+
+        fn main() {
+            System.Console.WriteLine(combined([28], ["a", "b"]));
+            System.Console.WriteLine(sum([10, 20]));
+            let texts: IReadOnlyCollection<string?> = ["present"];
+            System.Console.WriteLine(texts.Count);
+        }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "30\n30\n1\n"
+    );
+
+    for (actual, expected, values) in [
+        ("i32[]", "object", "[1]"),
+        ("string?[]", "string", "[null]"),
+        ("string[]?", "string", "null"),
+    ] {
+        let source = format!(
+            "fn main() {{ let source: {actual} = {values}; let result: System.Collections.Generic.IReadOnlyCollection<{expected}> = source; }}"
+        );
+        fs::write(&main, &source).unwrap();
+        let error = oxel(project, &["check", "--framework", "main.oxel"]);
+        assert!(!error.status.success(), "{source}");
+        let diagnostic = String::from_utf8(error.stderr).unwrap();
+        assert!(diagnostic.contains("E0301"), "{source}: {diagnostic}");
+    }
+}

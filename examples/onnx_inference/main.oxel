@@ -1,0 +1,22 @@
+use Microsoft::ML::OnnxRuntime::{InferenceSession, RunOptions};
+
+fn print_prediction(result: f32[]) {
+    for value in result {
+        System.Console.WriteLine(value);
+    }
+}
+
+fn main(args: string[]) -> Result<i32, string> {
+    if args.Length != 1 {
+        return Result.Err("usage: onnx-inference MODEL.onnx");
+    }
+    using session = new InferenceSession(args[0]) {
+        using options = new RunOptions() {
+            let first: f32[] = [1.0, 2.0, 3.0];
+            let second: f32[] = [-2.0, 0.0, 4.0];
+            print_prediction(predict(session, options, first));
+            print_prediction(predict(session, options, second));
+        }
+    }
+    Result.Ok(0)
+}

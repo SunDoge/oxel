@@ -5,8 +5,8 @@ use std::{collections::HashMap, sync::Arc};
 use clrmeta::tables::GenericParamRow;
 
 use super::{
-    ClassReference, CodedIndex, LocalType, Metadata, Reader, References, SignatureType, TableId,
-    Type, class_link, framework_type_ref, signature_type,
+    ClassReference, CodedIndex, CodedIndexKind, LocalType, Metadata, Reader, References,
+    SignatureType, TableId, Type, class_link, framework_type_ref, signature_type,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,6 +19,7 @@ pub(crate) struct TypeBound {
 pub(crate) enum TypeBoundKind {
     Reference,
     Value,
+    Unmanaged,
     Constructor,
     Target(Type),
 }
@@ -29,7 +30,7 @@ impl TypeBoundKind {
             Self::Reference => 4,
             Self::Value => 8,
             Self::Constructor => 16,
-            Self::Target(_) => 0,
+            Self::Unmanaged | Self::Target(_) => 0,
         }
     }
 }
@@ -54,6 +55,41 @@ pub(super) struct BoundReader<'a> {
 }
 
 impl BoundReader<'_> {
+    fn is_unmanaged_constraint(&self, index: CodedIndex) -> bool {
+        let read = || {
+            if index.table != Some(TableId::TypeSpec) {
+                return None;
+            }
+            let spec = self.metadata.get_type_spec(index.row)?;
+            let mut signature = Reader::new(self.metadata.blobs.get(spec.signature).ok()?);
+            // Roslyn represents unmanaged with modreq(UnmanagedType) class ValueType.
+            if signature.read_u8().ok()? != 0x1f {
+                return None;
+            }
+            let modifier = CodedIndex::decode(
+                CodedIndexKind::TypeDefOrRef,
+                signature.read_compressed_uint().ok()?,
+            );
+            if !framework_type_ref(
+                self.metadata,
+                modifier,
+                "System.Runtime.InteropServices",
+                "UnmanagedType",
+            ) || signature.read_u8().ok()? != 0x12
+            {
+                return None;
+            }
+            let value = CodedIndex::decode(
+                CodedIndexKind::TypeDefOrRef,
+                signature.read_compressed_uint().ok()?,
+            );
+            (signature.remaining() == 0
+                && framework_type_ref(self.metadata, value, "System", "ValueType"))
+            .then_some(())
+        };
+        read().is_some()
+    }
+
     fn signature(&self, index: CodedIndex) -> Option<SignatureType> {
         if index.table != Some(TableId::TypeSpec) {
             return Some(SignatureType::Class {
@@ -109,7 +145,13 @@ impl PendingBounds {
         }
         for &constraint in constraints {
             // C# emits a ValueType bound alongside the struct flag.
-            // Other modified TypeSpecs (including unmanaged) are unsupported.
+            if parameter.flags & 8 != 0 && reader.is_unmanaged_constraint(constraint) {
+                self.special.push(TypeBound {
+                    parameter: parameter.number,
+                    kind: TypeBoundKind::Unmanaged,
+                });
+                continue;
+            }
             if parameter.flags & 8 != 0
                 && framework_type_ref(reader.metadata, constraint, "System", "ValueType")
             {
