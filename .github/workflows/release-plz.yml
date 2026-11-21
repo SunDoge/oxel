@@ -1,0 +1,38 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oxel-release-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Prepare version and changelog
+    if: github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      RUSTUP_TOOLCHAIN: 1.91.0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the minimum Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Create or update the release PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+          version: 0.4.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
