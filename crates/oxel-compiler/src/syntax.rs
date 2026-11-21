@@ -1,3 +1,9 @@
+mod format;
+
+pub use format::format_source;
+
+use format::{Layout, Role};
+
 use crate::{ArgumentMode, CallableSignature, Diagnostic, DiagnosticFix, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1142,7 +1148,7 @@ pub(crate) fn parse_recovering(source: &str) -> (File<'_>, Vec<Diagnostic>) {
 }
 
 pub(crate) fn parse_at(source: &str, base: usize) -> (File<'_>, Vec<Diagnostic>) {
-    parse_with_cursor(source, base, None).0
+    parse_with_cursor(source, base, None, None).0
 }
 
 /// A call whose parenthesized argument list contains the cursor.
@@ -1159,7 +1165,7 @@ pub struct CallSite {
 
 pub fn call_site(source: &str, cursor: usize, declaration: Option<Span>) -> Option<CallSite> {
     let (source, base) = declaration_text(source, declaration)?;
-    parse_with_cursor(source, base, Some(cursor)).1
+    parse_with_cursor(source, base, Some(cursor), None).1
 }
 
 /// Reads a source signature even if the function body is incomplete.
@@ -1177,6 +1183,7 @@ pub fn declared_function_signature(
         pos: 0,
         cursor: None,
         call_site: None,
+        layout: None,
     };
     let index = parser.tokens.windows(2).position(|pair| {
         pair[0].kind == Fn && pair[1].kind == Name && parser.text(pair[1]) == name
@@ -1236,11 +1243,12 @@ fn declaration_text(source: &str, declaration: Option<Span>) -> Option<(&str, us
     }
 }
 
-fn parse_with_cursor(
-    source: &str,
+fn parse_with_cursor<'src>(
+    source: &'src str,
     base: usize,
     cursor: Option<usize>,
-) -> ((File<'_>, Vec<Diagnostic>), Option<CallSite>) {
+    layout: Option<&mut Layout>,
+) -> ((File<'src>, Vec<Diagnostic>), Option<CallSite>) {
     let (tokens, mut errors) = lex(source, base);
     let mut parser = Parser {
         source,
@@ -1249,6 +1257,7 @@ fn parse_with_cursor(
         pos: 0,
         cursor,
         call_site: None,
+        layout,
     };
     let mut file = File::default();
     file.scope.start = base;
@@ -1256,6 +1265,7 @@ fn parse_with_cursor(
         if cursor.is_some_and(|offset| offset < parser.current().span.start) {
             break;
         }
+        parser.mark_line();
         let internal = parser.take_internal();
         let declaration = match parser.peek() {
             Fn | Comptime | Async | Extern => parser
@@ -1330,16 +1340,32 @@ fn parse_with_cursor(
     ((file, errors), parser.call_site)
 }
 
-struct Parser<'src> {
+struct Parser<'src, 'layout> {
     source: &'src str,
     base: usize,
     tokens: Vec<Token>,
     pos: usize,
     cursor: Option<usize>,
     call_site: Option<CallSite>,
+    layout: Option<&'layout mut Layout>,
 }
 
-impl<'src> Parser<'src> {
+impl<'src> Parser<'src, '_> {
+    fn mark(&mut self, start: usize, role: Role) {
+        if let Some(layout) = &mut self.layout {
+            layout.roles.insert(start, role);
+        }
+    }
+
+    fn mark_line(&mut self) {
+        if let Some(layout) = &mut self.layout {
+            layout.lines.insert(self.tokens[self.pos].span.start);
+        }
+    }
+
+    fn mark_shift(&mut self) {
+        self.mark(self.tokens[self.pos + 1].span.start, Role::ShiftEnd);
+    }
     // Keep angle brackets separate for nested type arguments. Adjacent pairs
     // become shift operators only when the expression parser looks for one.
     fn shift_operator(&self) -> Option<(Binary, bool)> {
@@ -1368,6 +1394,7 @@ impl<'src> Parser<'src> {
                 let (op, true) = self.shift_operator()? else {
                     return None;
                 };
+                self.mark_shift();
                 self.bump();
                 self.bump();
                 Some(Some(op))
@@ -1513,7 +1540,8 @@ impl<'src> Parser<'src> {
     fn imports(&mut self) -> Parsed<Vec<Import<'src>>> {
         let prefix = self.path()?;
         let imports = if self.take(DoubleColon).is_some() {
-            self.expect(LeftBrace, "'{' after import prefix")?;
+            let open = self.expect(LeftBrace, "'{' after import prefix")?;
+            self.mark(open.span.start, Role::Import);
             if self.peek() == RightBrace {
                 return Err(self.expected("an import name"));
             }
@@ -1544,7 +1572,8 @@ impl<'src> Parser<'src> {
     fn type_path(&mut self, depth: usize) -> Parsed<Path<'src>> {
         self.nesting(depth)?;
         let mut path = self.path()?;
-        if self.take(Less).is_some() {
+        if let Some(open) = self.take(Less) {
+            self.mark(open.span.start, Role::AngleOpen);
             let (arguments, end) = self.type_arguments(depth + 1)?;
             path.type_arguments = arguments;
             path.span.end = end;
@@ -1556,7 +1585,8 @@ impl<'src> Parser<'src> {
         let mut path = self.path()?;
         // After a conversion, a bare '<' can start a comparison.
         if self.peek() == Less && self.shift_operator().is_none() && self.has_type_argument_list() {
-            self.bump();
+            let open = self.bump();
+            self.mark(open.span.start, Role::AngleOpen);
             let (arguments, end) = self.type_arguments(depth + 1)?;
             path.type_arguments = arguments;
             path.span.end = end;
@@ -1619,6 +1649,7 @@ impl<'src> Parser<'src> {
         while self.take(Comma).is_some() && !matches!(self.peek(), Greater | GreaterEqual) {
             items.push(self.type_path(depth)?);
         }
+        self.mark(self.current().span.start, Role::AngleClose);
         if self.peek() == GreaterEqual {
             // In a type annotation, `>=` can end the type and start an assignment.
             let token = &mut self.tokens[self.pos];
@@ -1633,14 +1664,15 @@ impl<'src> Parser<'src> {
         &mut self,
         bounds: &mut Vec<TypeBound<'src>>,
     ) -> Parsed<Vec<(&'src str, Span)>> {
-        if self.take(Less).is_none() {
+        let Some(open) = self.take(Less) else {
             return Ok(Vec::new());
-        }
+        };
+        self.mark(open.span.start, Role::AngleOpen);
         if self.peek() == Greater {
             return Err(self.expected("a type parameter"));
         }
         let mut parameter = 0;
-        self.list(Greater, "'>'", |parser| {
+        let parameters = self.list(Greater, "'>'", |parser| {
             let name = parser.name()?;
             if parser.take(Colon).is_some() {
                 loop {
@@ -1680,7 +1712,9 @@ impl<'src> Parser<'src> {
             }
             parameter += 1;
             Ok(name)
-        })
+        })?;
+        self.mark(self.tokens[self.pos - 1].span.start, Role::AngleClose);
+        Ok(parameters)
     }
 
     fn typed_name(&mut self) -> Parsed<TypedName<'src>> {
@@ -1711,10 +1745,12 @@ impl<'src> Parser<'src> {
         let (name, span) = self.name()?;
         let mut type_bounds = Vec::new();
         let type_parameters = self.type_parameters(&mut type_bounds)?;
-        self.expect(LeftBrace, "'{'")?;
+        let open = self.expect(LeftBrace, "'{'")?;
+        self.mark(open.span.start, Role::Block);
         let shape = if keyword.kind == Interface {
             let mut methods = Vec::new();
             while self.take(RightBrace).is_none() {
+                self.mark_line();
                 self.expect_interface_fn()?;
                 let header = self.function_header(None)?;
                 if !header.type_parameters.is_empty() {
@@ -1787,9 +1823,11 @@ impl<'src> Parser<'src> {
         let interface = self.type_path(0)?;
         self.expect(For, "'for'")?;
         let target = self.type_path(0)?;
-        self.expect(LeftBrace, "'{'")?;
+        let open = self.expect(LeftBrace, "'{'")?;
+        self.mark(open.span.start, Role::Block);
         let mut methods = Vec::new();
         while self.take(RightBrace).is_none() {
+            self.mark_line();
             if !matches!(self.peek(), Fn | Async) {
                 return Err(self.expected("'fn', 'async fn', or '}'"));
             }
@@ -1909,7 +1947,9 @@ impl<'src> Parser<'src> {
         let start = self.current().span.start;
         let mut test = false;
         let mut ignore = None;
-        while self.take(Hash).is_some() {
+        while self.peek() == Hash {
+            self.mark_line();
+            self.bump();
             self.expect(LeftBracket, "'[' after '#'")?;
             let (attribute, span) = self.name()?;
             let duplicate = match attribute {
@@ -1942,6 +1982,7 @@ impl<'src> Parser<'src> {
         if !matches!(self.peek(), Fn | Async) {
             return Err(self.expected("'fn' or 'async fn' after '#[test]'"));
         }
+        self.mark_line();
         let mut function = self.function(None)?;
         function.test = Some(if ignore.is_some() {
             TestAttribute::Ignored
@@ -2002,7 +2043,8 @@ impl<'src> Parser<'src> {
         if self.peek() != Name || self.text(self.current()) != "in" {
             return Err(self.expected("'in'"));
         }
-        self.bump();
+        let keyword = self.bump();
+        self.mark(keyword.span.start, Role::ForIn);
         let source = self.expression_inner(0, depth, false)?;
         let range = match self.peek() {
             op @ (DotDot | DotDotEqual) => {
@@ -2104,9 +2146,11 @@ impl<'src> Parser<'src> {
     fn block(&mut self, depth: usize) -> Parsed<Block<'src>> {
         self.nesting(depth)?;
         let start = self.expect(LeftBrace, "'{'")?.span.start;
+        self.mark(start, Role::Block);
         let mut statements = Vec::new();
         let mut tail = None;
         while self.peek() != RightBrace {
+            self.mark_line();
             match self.peek() {
                 Let => statements.push(self.let_statement(depth)?),
                 Return => {
@@ -2238,7 +2282,8 @@ impl<'src> Parser<'src> {
                     && self.peek() == Question
                     && self.current().span.start == operator.span.end;
                 if optional {
-                    self.bump();
+                    let question = self.bump();
+                    self.mark(question.span.start, Role::OptionalCast);
                 }
                 let target = self.conversion_type(depth + 1)?;
                 let tree_depth = left.depth + 1;
@@ -2271,6 +2316,9 @@ impl<'src> Parser<'src> {
             };
             if binding < min_binding {
                 break;
+            }
+            if tokens == 2 {
+                self.mark_shift();
             }
             self.pos += tokens;
             let next_binding = if operator_kind == Coalesce {
@@ -2448,7 +2496,8 @@ impl<'src> Parser<'src> {
         self.nesting(depth)?;
         self.bump();
         let value = Box::new(self.expression_inner(0, depth + 1, false)?);
-        self.expect(LeftBrace, "'{'")?;
+        let open = self.expect(LeftBrace, "'{'")?;
+        self.mark(open.span.start, Role::Block);
         let arms = self.list(RightBrace, "'}'", |parser| {
             let pattern = parser.pattern(depth + 1)?;
             let guard = parser
@@ -2499,7 +2548,11 @@ impl<'src> Parser<'src> {
             }
             True | False => PatternKind::Boolean(self.bump().kind == True),
             Integer | Minus => {
-                let negative = self.take(Minus).is_some();
+                let minus = self.take(Minus);
+                if let Some(minus) = minus {
+                    self.mark(minus.span.start, Role::Prefix);
+                }
+                let negative = minus.is_some();
                 let token = self.expect(Integer, "an integer literal")?;
                 PatternKind::Integer {
                     digits: self.text(token),
@@ -2558,7 +2611,8 @@ impl<'src> Parser<'src> {
         if self.take(DoubleColon).is_none() {
             return Ok(None);
         }
-        self.expect(Less, "'<'")?;
+        let open = self.expect(Less, "'<'")?;
+        self.mark(open.span.start, Role::AngleOpen);
         self.type_arguments(depth).map(Some)
     }
 
@@ -2640,6 +2694,7 @@ impl<'src> Parser<'src> {
 
     fn call_argument(&mut self, depth: usize) -> Parsed<Expr<'src>> {
         let reference = if let Some(ampersand) = self.take(Ampersand) {
+            self.mark(ampersand.span.start, Role::Prefix);
             let mode = if self.take(Mut).is_some() {
                 ArgumentMode::Ref
             } else {
@@ -2670,8 +2725,11 @@ impl<'src> Parser<'src> {
         const LAMBDA_BODY_DEPTH: usize = 6;
         let start = self.current().span.start;
         let async_fn = self.take(Async).is_some();
-        let parameters = if self.take(Pipe).is_some() {
-            self.list(Pipe, "'|'", Self::name)?
+        let parameters = if let Some(open) = self.take(Pipe) {
+            self.mark(open.span.start, Role::LambdaOpen);
+            let parameters = self.list(Pipe, "'|'", Self::name)?;
+            self.mark(self.tokens[self.pos - 1].span.start, Role::LambdaClose);
+            parameters
         } else {
             self.take(OrOr);
             Vec::new()
@@ -2947,6 +3005,9 @@ impl<'src> Parser<'src> {
             Match => self.match_expression(depth + 1)?,
             Minus | Bang | Tilde | Throw => {
                 self.bump();
+                if token.kind != Throw {
+                    self.mark(token.span.start, Role::Prefix);
+                }
                 if token.kind == Minus && matches!(self.peek(), Integer | FloatLiteral) {
                     self.numeric_literal(true)
                 } else {

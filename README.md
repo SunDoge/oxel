@@ -109,6 +109,18 @@ Raise the count, then edit the label or increment logic in [view.oxel](examples/
 
 The host receives `OXEL_RELOAD_DIRECTORY`. Its `current` file names the latest generation number, and `<generation>.dll` contains that assembly. The [example loader](examples/hot_reload/loader.oxel) binds a public function to a CLR delegate in a collectible load context. The Plico window wakes when the generation changes, and the [development host](examples/plico_counter/dev.oxel) switches delegates on the UI thread after accepting the new view's batch. Keep persistent state and shared dependencies in the host. Restart the session to pick up host, manifest, dependency or native library changes. Use the regular Plico manifest for Native AOT publishing.
 
+## Formatting
+
+Run `oxel fmt` in a directory with `oxel.toml` to format the project's sources and tests. You can also pass a manifest path or one or more source files.
+
+```sh
+oxel fmt
+oxel fmt src/main.oxel src/routes.oxel
+oxel fmt --check --manifest-path examples/project/oxel.toml
+```
+
+`--check` is read-only and exits with a nonzero status if any file needs formatting. Formatting uses four-space indentation and preserves comments, literal contents, and intentional line breaks in lists. It uses the compiler's syntax parser and works without .NET or a NuGet restore. In-place writes start only after every input parses successfully.
+
 ## Multi-file modules
 
 ```sh

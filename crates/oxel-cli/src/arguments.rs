@@ -38,6 +38,8 @@ enum Command {
     Compile(BuildInputs),
     /// Check syntax and types.
     Check(CheckInputs),
+    /// Format Oxel source files.
+    Fmt(FmtInputs),
     /// Compile and run on CoreCLR.
     Run(RunInputs),
     /// Run a CoreCLR host and recompile its reloadable library on source changes.
@@ -70,6 +72,15 @@ struct CheckInputs {
     /// Check the unit test module.
     #[usage(long)]
     tests: bool,
+}
+
+#[derive(Args)]
+struct FmtInputs {
+    /// Report unformatted files without modifying them.
+    #[usage(long)]
+    check: bool,
+    /// Source files. When omitted, format all sources and tests in oxel.toml.
+    sources: Vec<PathBuf>,
 }
 
 #[derive(Args)]
@@ -142,6 +153,9 @@ pub(super) enum Action {
     Check {
         tests: bool,
     },
+    Fmt {
+        check: bool,
+    },
     Run,
     Test {
         filter: Option<String>,
@@ -207,6 +221,15 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
     let (action, build) = match parsed.command {
         Command::Compile(build) => (Action::Compile, build),
         Command::Check(check) => (Action::Check { tests: check.tests }, check.build),
+        Command::Fmt(inputs) => (
+            Action::Fmt {
+                check: inputs.check,
+            },
+            BuildInputs {
+                sources: inputs.sources,
+                ..BuildInputs::default()
+            },
+        ),
         Command::Run(run) => {
             arguments = run.arguments;
             (Action::Run, run.build)

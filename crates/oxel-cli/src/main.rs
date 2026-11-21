@@ -3,6 +3,7 @@ mod arguments;
 mod bindgen;
 mod dev;
 mod diagnostics;
+mod fmt;
 mod lsp;
 mod manifest;
 mod native_assets;
@@ -108,7 +109,10 @@ fn cli(run: &mut Run) -> ExitCode {
         sources = manifest.sources;
         if matches!(
             action,
-            Action::Test { .. } | Action::Check { tests: true } | Action::Lsp { tests: true }
+            Action::Fmt { .. }
+                | Action::Test { .. }
+                | Action::Check { tests: true }
+                | Action::Lsp { tests: true }
         ) {
             sources.extend(manifest.test_sources);
         }
@@ -122,6 +126,9 @@ fn cli(run: &mut Run) -> ExitCode {
     } else {
         None
     };
+    if let Action::Fmt { check } = action {
+        return fmt::run(&sources, check, format);
+    }
     let package = package
         .as_ref()
         .map(|(path, name, kind, libraries)| Package {

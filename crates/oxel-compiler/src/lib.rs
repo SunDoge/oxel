@@ -19,7 +19,9 @@ pub use project::{
     check_test_project, compile_project, compile_project_with_kind, compile_test_project,
     compile_test_project_filtered, compile_test_project_with_options, discover_test_project,
 };
-pub use syntax::{CallSite, call_site, declared_function_signature, valid_identifier};
+pub use syntax::{
+    CallSite, call_site, declared_function_signature, format_source, valid_identifier,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ArgumentMode {
