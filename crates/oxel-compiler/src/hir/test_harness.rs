@@ -1,5 +1,7 @@
 //! Builds the test entry point from the same typed blocks as source methods.
 
+use std::sync::Arc;
+
 use super::{
     Binary, Block, Catch, Checked, Checker, ExceptionRegion, Expr, ExprKind, Function, MethodBody,
     Signature, Statement, Structs, Target, Type, Value, entry::Task,
@@ -8,10 +10,10 @@ use crate::{Diagnostic, Span, TestOptions, syntax};
 
 pub(super) fn runner<'src>(
     declarations: &[&syntax::Function<'src>],
-    functions: &[Function<'src>],
+    functions: &[Arc<Function>],
     types: &Structs<'_, '_>,
     options: TestOptions<'_>,
-) -> Checked<Function<'src>> {
+) -> Checked<Function> {
     let span = Span::default();
     let expr = |kind, ty| Expr { kind, ty, span };
     let integer = |number| expr(ExprKind::Integer(number), Type::I32);
@@ -125,7 +127,7 @@ pub(super) fn runner<'src>(
         namespace: None,
         has_exception_regions: count != 0,
         internal: true,
-        name: "<oxel_test_main>",
+        name: "<oxel_test_main>".into(),
         span,
         signature: Signature {
             type_arity: 0,

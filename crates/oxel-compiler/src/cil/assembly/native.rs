@@ -4,15 +4,15 @@ use crate::{
     syntax::BufferLength,
 };
 
-pub(super) struct Imports<'a, 'src> {
-    wrappers: Vec<Wrapper<'a, 'src>>,
+pub(super) struct Imports<'a> {
+    wrappers: Vec<Wrapper<'a>>,
     positions: Vec<Option<usize>>,
     first_callback_method: u32,
     callback_count: usize,
 }
 
-pub(super) struct Wrapper<'a, 'src> {
-    source: &'a Function<'src>,
+pub(super) struct Wrapper<'a> {
+    source: &'a Function,
     raw_method: u32,
     callbacks: Vec<Callback<'a>>,
 }
@@ -23,9 +23,9 @@ struct Callback<'a> {
     descriptor: &'a NativeCallback,
 }
 
-impl<'a, 'src> Imports<'a, 'src> {
+impl<'a> Imports<'a> {
     pub(super) fn new(
-        methods: &[&'a Function<'src>],
+        methods: &[&'a Function],
         order: &[usize],
         first_raw: usize,
         first_type: usize,
@@ -96,7 +96,7 @@ impl<'a, 'src> Imports<'a, 'src> {
         self.first_callback_method
     }
 
-    pub(super) fn wrapper(&self, id: usize) -> Option<&Wrapper<'_, '_>> {
+    pub(super) fn wrapper(&self, id: usize) -> Option<&Wrapper<'_>> {
         self.positions[id].map(|position| &self.wrappers[position])
     }
 
@@ -130,13 +130,14 @@ impl<'a, 'src> Imports<'a, 'src> {
     }
 }
 
-impl Wrapper<'_, '_> {
+impl Wrapper<'_> {
     pub(super) fn emit(
         &self,
         output: &mut Writer,
         metadata: &mut Tables<'_>,
-        function: &Function<'_>,
+        function: &Function,
         parameters: &[ParameterPassing],
+        span: Span,
     ) -> Result<(), Diagnostic> {
         let empty = Default::default();
         let mut body = Body::new(metadata, 0, &[], &empty, false);
@@ -197,7 +198,7 @@ impl Wrapper<'_, '_> {
             body.max_stack = body.max_stack.max(1);
         }
         body.op(0x2a);
-        body.write(output, function.span)
+        body.write(output, span)
     }
 
     fn add_raw_import(&self, metadata: &mut Tables<'_>) {

@@ -395,7 +395,7 @@ pub(super) fn evaluate<'src>(
 fn initializer<'src>(
     module: &ModuleScope<'_, 'src, '_>,
     declaration: &syntax::ConstDefinition<'src>,
-    functions: &[Option<super::Function<'src>>],
+    functions: &[Option<super::Function>],
     occurrences: Option<&mut Vec<Occurrence>>,
     evaluation: Option<(&mut BodyCache, &Fingerprints, &[usize])>,
 ) -> Checked<Constant> {

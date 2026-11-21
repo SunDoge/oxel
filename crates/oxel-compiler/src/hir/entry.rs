@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     Block, Checked, Decision, Destination, Expr, ExprKind, Function, Match, Member, MethodBody,
     Signature, Statement, Structs, Target, Type, Value, unions::CarrierLayout,
@@ -65,7 +67,7 @@ impl Entry {
         })
     }
 
-    pub(super) fn install(&self, functions: &mut Vec<Function<'_>>) -> usize {
+    pub(super) fn install(&self, functions: &mut Vec<Arc<Function>>) -> usize {
         if self.task.is_none() && self.result.is_none() {
             return self.main;
         }
@@ -93,11 +95,11 @@ impl Entry {
         }
         signature.result = value.ty;
         let entry = functions.len();
-        functions.push(Function {
+        functions.push(Arc::new(Function {
             namespace: None,
             has_exception_regions: false,
             internal: true,
-            name: "<oxel_main>",
+            name: "<oxel_main>".into(),
             span,
             signature,
             parameter_names: Vec::new(),
@@ -111,7 +113,7 @@ impl Entry {
                 tail: Some(Box::new(value)),
             }),
             lambdas: Vec::new(),
-        });
+        }));
         entry
     }
 }

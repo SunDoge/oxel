@@ -217,6 +217,22 @@ fn measure_project_edits() {
         assert_eq!(analyzer.parsed_files(), 1);
         assert_eq!(analyzer.checked_functions(), 1);
     });
+    measure("20 files / full compile", || {
+        next ^= 1;
+        sources[0] = Arc::clone(&alternatives[next]);
+        let files: Vec<_> = sources.iter().map(Arc::as_ref).collect();
+        black_box(oxel::compile_project(&files, "benchmark", &references).unwrap());
+    });
+    let mut compiler = oxel::ProjectCompiler::new(oxel::AssemblyKind::Executable, &references);
+    black_box(compiler.compile(&sources, "benchmark").unwrap());
+    measure("20 files / incremental IL", || {
+        next ^= 1;
+        sources[0] = Arc::clone(&alternatives[next]);
+        black_box(compiler.compile(&sources, "benchmark").unwrap());
+        assert_eq!(compiler.parsed_files(), 1);
+        assert_eq!(compiler.checked_functions(), 1);
+    });
+    black_box(analyzer.inspect(&sources, &references));
     let signatures = [
         Arc::clone(&sources[19]),
         Arc::<str>::from(sources[19].replace(

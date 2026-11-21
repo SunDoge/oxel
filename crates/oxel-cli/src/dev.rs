@@ -1,5 +1,7 @@
 //! Publishes complete library generations for a long-lived CoreCLR host.
 
+mod watch;
+
 use std::{
     fs,
     io::{self, Write},
@@ -9,15 +11,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
-    time::Duration,
 };
 
-use oxel::{AssemblyKind, References};
+use oxel::{AssemblyKind, ProjectCompiler, References};
 
 use crate::{Package, diagnostics::Format, load_references, manifest::Manifest, sdk};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
+use watch::SourceWatch;
 
 pub(super) fn run(
     mut command: Command,
@@ -34,8 +34,14 @@ pub(super) fn run(
         ));
     }
     let references = resolve_references(path, &project, locked, format)?;
-    let mut sources = snapshot(&project.sources);
-    let bytes = compile(&project, &references, &sources, format)?;
+    let mut compiler = ProjectCompiler::new(project.kind, &references);
+    let mut watch = SourceWatch::new(&project.sources);
+    let mut sources: Vec<_> = project
+        .sources
+        .iter()
+        .map(|path| read_source(path))
+        .collect();
+    let bytes = compile(&project, &mut compiler, &sources, format)?;
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&interrupted);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed)).map_err(|error| {
@@ -62,7 +68,6 @@ pub(super) fn run(
             format.error(path, "E0005", format!("could not launch dotnet: {error}"))
         })?;
 
-    let mut pending = None;
     loop {
         if interrupted.load(Ordering::Relaxed) {
             let _ = child.kill();
@@ -78,45 +83,42 @@ pub(super) fn run(
         })? {
             return Ok(status);
         }
-        thread::sleep(POLL_INTERVAL);
-        let next = snapshot(&project.sources);
-        if next == sources {
-            pending = None;
-        } else if pending.as_ref() == Some(&next) {
-            sources = next;
-            pending = None;
-            if let Ok(bytes) = compile(&project, &references, &sources, format) {
-                match publish(directory.path(), generation + 1, &bytes) {
-                    Ok(()) => {
-                        generation += 1;
-                        // Keep the previous image available for a reader that just
-                        // observed the old generation marker.
-                        if generation >= 2 {
-                            let _ = fs::remove_file(image(directory.path(), generation - 2));
-                        }
-                    }
-                    Err(error) => {
-                        let _ = publish_error(error);
+        let mut changed = false;
+        for index in watch.changes() {
+            let source = read_source(&project.sources[index]);
+            if source != sources[index] {
+                sources[index] = source;
+                changed = true;
+            }
+        }
+        if changed && let Ok(bytes) = compile(&project, &mut compiler, &sources, format) {
+            match publish(directory.path(), generation + 1, &bytes) {
+                Ok(()) => {
+                    generation += 1;
+                    // Keep the previous image available for a reader that just
+                    // observed the old generation marker.
+                    if generation >= 2 {
+                        let _ = fs::remove_file(image(directory.path(), generation - 2));
                     }
                 }
+                Err(error) => {
+                    let _ = publish_error(error);
+                }
             }
-        } else {
-            pending = Some(next);
         }
     }
 }
 
-fn snapshot(paths: &[PathBuf]) -> Vec<Result<String, String>> {
-    paths
-        .iter()
-        .map(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
-        .collect()
+fn read_source(path: &Path) -> Result<Arc<str>, String> {
+    fs::read_to_string(path)
+        .map(Arc::from)
+        .map_err(|error| error.to_string())
 }
 
 fn compile(
     project: &Manifest,
-    references: &References,
-    snapshot: &[Result<String, String>],
+    compiler: &mut ProjectCompiler<'_>,
+    snapshot: &[Result<Arc<str>, String>],
     format: Format,
 ) -> Result<Vec<u8>, ExitCode> {
     let sources = project
@@ -124,13 +126,15 @@ fn compile(
         .iter()
         .zip(snapshot)
         .map(|(path, source)| {
-            source.as_deref().map_err(|error| {
+            source.as_ref().cloned().map_err(|error| {
                 format.error(path, "E0002", format!("could not read source: {error}"))
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    oxel::compile_project_with_kind(&sources, &project.name, references, project.kind)
-        .map_err(|errors| format.report(&project.sources, &sources, errors))
+    compiler.compile(&sources, &project.name).map_err(|errors| {
+        let text: Vec<_> = sources.iter().map(Arc::as_ref).collect();
+        format.report(&project.sources, &text, errors)
+    })
 }
 
 fn resolve_references(

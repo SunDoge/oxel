@@ -10,7 +10,7 @@ mod shape;
 pub(crate) use body_cache::{BodyCache, Lookup};
 pub(crate) use shape::{signature_type_names, type_names};
 
-pub use incremental::ProjectAnalyzer;
+pub use incremental::{ProjectAnalyzer, ProjectCompiler};
 
 use crate::{
     Diagnostic, References, Span, hir,

@@ -119,7 +119,7 @@ struct Frame {
 pub(super) fn evaluate(
     initializer: &Expr,
     locals: usize,
-    functions: &[Option<Function<'_>>],
+    functions: &[Option<Function>],
     types: &Structs<'_, '_>,
 ) -> Result<Evaluated, Diagnostic> {
     let mut interpreter = Interpreter {
@@ -145,7 +145,7 @@ pub(super) fn evaluate(
 }
 
 struct Interpreter<'a, 'src, 'refs> {
-    functions: &'a [Option<Function<'src>>],
+    functions: &'a [Option<Function>],
     types: &'a Structs<'src, 'refs>,
     remaining: usize,
     calls: HashMap<Call, CallState>,

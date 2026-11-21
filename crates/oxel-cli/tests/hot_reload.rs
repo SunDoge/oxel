@@ -106,7 +106,11 @@ fn main(args: string[]) -> i32 {
     )
     .unwrap();
     let view = project.join("view.oxel");
-    let change = |body: &str| fs::write(&view, body).unwrap();
+    let change = |body: &str| {
+        let mut staging = tempfile::NamedTempFile::new_in(project).unwrap();
+        staging.write_all(body.as_bytes()).unwrap();
+        staging.persist(&view).unwrap();
+    };
     change("fn update(count: i32) -> i32 { count + 1 }");
 
     let mut host = Host(

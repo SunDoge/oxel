@@ -4,6 +4,20 @@ use blake3::{Hash, Hasher};
 
 use crate::syntax::{Bound, Function, Path, TypeBound, TypeDefinition, TypeShape, TypeSuffix};
 
+pub(super) fn file_scope(hash: &mut Hasher, scope: &crate::syntax::FileScope<'_>) {
+    if let Some(namespace) = &scope.namespace {
+        hash.update(&[1]);
+        path(hash, namespace);
+    } else {
+        hash.update(&[0]);
+    }
+    length(hash, scope.imports.len());
+    for import in &scope.imports {
+        path(hash, &import.path);
+        name(hash, import.alias.0);
+    }
+}
+
 pub(super) fn signature(function: &Function<'_>) -> Hash {
     let mut hash = Hasher::new();
     hash.update(&[

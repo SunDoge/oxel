@@ -9,6 +9,7 @@ license = "Apache-2.0"
 crate-type = ["cdylib"]
 
 [dependencies]
+notify = "8.2"
 plico = { git = "https://github.com/SunDoge/plico.git", rev = "56d432968a8b7b7836a6f846503460e2db7db0a3" }
 plico-desktop = { git = "https://github.com/SunDoge/plico.git", rev = "56d432968a8b7b7836a6f846503460e2db7db0a3" }
 

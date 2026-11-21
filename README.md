@@ -105,7 +105,9 @@ oxel dev --manifest-path examples/plico_counter/dev.toml \
 
 Raise the count, then edit the label or increment logic in [view.oxel](examples/plico_counter/view.oxel) and save. The view updates in the existing window and keeps the count. Compiler diagnostics appear in the terminal while the last usable view stays active. Closing the window or pressing Ctrl+C stops the development session.
 
-`oxel dev` watches the sources in a `kind = "library"` reload manifest, reuses its resolved references, and publishes each successful build to the directory in `OXEL_RELOAD_DIRECTORY`. The directory's `current` file names the latest generation number, and `<generation>.dll` contains that assembly. The [example loader](examples/hot_reload/loader.oxel) binds a public function to a CLR delegate in a collectible load context. The [Plico development host](examples/plico_counter/dev.oxel) switches delegates on the UI thread after accepting the new view's batch. Keep persistent state and shared dependencies in the host. Restart the session to pick up host, manifest, dependency or native library changes. Use the regular Plico manifest for Native AOT publishing.
+`oxel dev` watches the sources in a `kind = "library"` reload manifest. It retains parsed files, resolved references, and checked function bodies in memory. A body-only edit rechecks changed functions. Changes to imports, types, signatures, or compile-time inputs invalidate the module's checked bodies. Each successful build emits a complete replacement assembly.
+
+The host receives `OXEL_RELOAD_DIRECTORY`. Its `current` file names the latest generation number, and `<generation>.dll` contains that assembly. The [example loader](examples/hot_reload/loader.oxel) binds a public function to a CLR delegate in a collectible load context. The Plico window wakes when the generation changes, and the [development host](examples/plico_counter/dev.oxel) switches delegates on the UI thread after accepting the new view's batch. Keep persistent state and shared dependencies in the host. Restart the session to pick up host, manifest, dependency or native library changes. Use the regular Plico manifest for Native AOT publishing.
 
 ## Multi-file modules
 
@@ -894,6 +896,15 @@ OXEL_BENCH_NATIVE=1 cargo bench --bench compiler --locked
 The tests check invalid programs, deterministic image bytes, and actual execution on CoreCLR through both `oxel run` and a separately compiled DLL. To independently verify the emitted CIL, install Microsoft's `dotnet-ilverify` for your .NET runtime and run `cargo test --locked --test cil_verification -- --ignored`. Put `ilverify` on `PATH` or set `OXEL_ILVERIFY` to its executable path. The test uses the installed runtime assemblies and verifies the example DLLs and the synthesized unit test runner. [Microsoft ILVerify](https://www.nuget.org/packages/dotnet-ilverify/)
 
 The benchmark measures in-process check and compile for the example, a generated 500-function source, and larger numeric and generic workloads. Run it with `OXEL_JOBS=1` and `OXEL_JOBS=4` in separate processes to compare the same workloads. It also compares fresh analysis of 20 files with cached analysis after a function-body, signature, or constant-value edit. A 21-file workload measures formatting edits and changes to a field type. A separate workload edits a runtime function that uses an expensive comptime constant and then edits an unrelated type. CLI measurements include fresh compiler process startup with warm filesystem caches. The CoreCLR measurement runs the existing DLL and includes runtime startup, initial JIT and execution. The opt-in Native AOT benchmark reports publish time, executable size and the time to start and run that executable.
+
+The 20-file workload also compares full compilation and incremental emission after editing one method. To measure from save until the changed program prints its result, run the edit-loop benchmark on Linux or macOS with Python, Go, and the .NET 10 SDK.
+
+```sh
+cargo build --release --locked -p oxel-cli
+python3 scripts/benchmark-edit.py
+```
+
+The script generates 1,024 equivalent functions across 32 files, warms up each workflow, and reports the median and p90 over 11 distinct edits by default. It verifies that `oxel dev` and `dotnet watch` keep their application process alive. `oxel run` and `go run` rebuild and launch an executable on each edit. Pass `--previous-oxel /path/to/oxel` to include an older release binary with the `dev` command.
 
 The opt-in framework benchmark times `check --framework` on the file line-counting example, including SDK discovery and CLR metadata loading. The opt-in Go comparison uses equivalent sources with 1,024 functions that perform integer arithmetic and branching. It launches each compiler directly with one worker and includes writing its output. Oxel emits a CLR assembly and runtime configuration. Go emits an object file using the compiler behind `go tool compile`. The comparison covers this single-file workload with warm filesystem caches.
 

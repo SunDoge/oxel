@@ -2,14 +2,20 @@ mod batch;
 
 use std::{
     cell::{Cell, RefCell},
+    path::PathBuf,
     rc::Rc,
     slice,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use batch::Batch;
-use plico::{Theme, UiContext, View};
-use plico_desktop::WindowOptions;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use plico::UiContext;
+use plico_desktop::{HostView, WakeCallback, WindowOptions};
 
 const MAX_COMMANDS: usize = 128;
 const MAX_TEXT_BYTES: usize = 4096;
@@ -62,13 +68,13 @@ fn run(build: Build, poll_reload: bool) -> i32 {
         build,
         batch,
         failed: Rc::clone(&failed),
-        poll_reload,
+        reload: poll_reload.then(Reload::default),
     };
     let options = WindowOptions::new()
         .title("Oxel Plico Counter")
         .initial_inner_size(360, 180)
         .min_inner_size(320, 160);
-    match plico_desktop::run_view_with_options(view, options) {
+    match plico_desktop::run_host_view_with_options(view, options) {
         Ok(()) => i32::from(failed.get()),
         Err(error) => {
             eprintln!("Plico window failed: {error}");
@@ -132,30 +138,100 @@ struct Counter {
     build: Build,
     batch: Batch,
     failed: Rc<Cell<bool>>,
-    poll_reload: bool,
+    reload: Option<Reload>,
 }
 
-impl View for Counter {
-    fn theme(&self) -> Theme {
-        Theme::default()
+#[derive(Default)]
+struct Reload {
+    ready: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    watcher: Option<RecommendedWatcher>,
+}
+
+impl Reload {
+    fn watch(&mut self, wake: WakeCallback) -> Option<RecommendedWatcher> {
+        let directory = PathBuf::from(std::env::var_os("OXEL_RELOAD_DIRECTORY")?);
+        let directory = std::fs::canonicalize(directory).ok()?;
+        let marker = directory.join("current");
+        let ready = Arc::clone(&self.ready);
+        let failed = Arc::clone(&self.failed);
+        let on_event = Arc::clone(&wake);
+        let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
+            let changed = match event {
+                Ok(event) => {
+                    event.need_rescan()
+                        || (!matches!(event.kind, EventKind::Access(_))
+                            && event.paths.contains(&marker))
+                }
+                Err(_) => {
+                    failed.store(true, Ordering::Release);
+                    true
+                }
+            };
+            if changed {
+                ready.store(true, Ordering::Release);
+                on_event();
+            }
+        })
+        .ok()?;
+        watcher
+            .watch(&directory, RecursiveMode::NonRecursive)
+            .ok()?;
+        // Reconcile a publication that arrived before the window attached its watcher.
+        self.ready.store(true, Ordering::Release);
+        wake();
+        Some(watcher)
+    }
+}
+
+impl Counter {
+    fn update(&mut self, events: &[i32]) -> bool {
+        if self.failed.get() {
+            return false;
+        }
+        match request_batch(self.build, events) {
+            Ok(Some(batch)) => {
+                self.batch = batch;
+                true
+            }
+            Ok(None) => false,
+            Err(()) => {
+                eprintln!("Plico counter rejected a view update");
+                self.failed.set(true);
+                false
+            }
+        }
+    }
+}
+
+impl HostView for Counter {
+    fn set_wake_callback(&mut self, wake: WakeCallback) {
+        if let Some(reload) = &mut self.reload {
+            reload.watcher = reload.watch(wake);
+        }
+    }
+
+    fn poll_updates(&mut self) -> bool {
+        let Some(reload) = &mut self.reload else {
+            return false;
+        };
+        if reload.failed.swap(false, Ordering::AcqRel) {
+            reload.watcher = None;
+            return true; // Start the fallback timer on the next declaration.
+        }
+        reload.ready.swap(false, Ordering::AcqRel) && self.update(&[])
     }
 
     fn show(&mut self, ui: &mut UiContext<'_>) {
         let events = self.batch.show(ui);
-        if (!events.is_empty() || self.poll_reload) && !self.failed.get() {
-            match request_batch(self.build, &events) {
-                Ok(Some(batch)) => {
-                    self.batch = batch;
-                    ui.request_rebuild();
-                }
-                Ok(None) => {}
-                Err(()) => {
-                    eprintln!("Plico counter rejected a view update");
-                    self.failed.set(true);
-                }
-            }
+        let polling = self
+            .reload
+            .as_ref()
+            .is_some_and(|reload| reload.watcher.is_none());
+        if (polling || !events.is_empty()) && self.update(&events) {
+            ui.request_rebuild();
         }
-        if self.poll_reload && !self.failed.get() {
+        if polling && !self.failed.get() {
             ui.request_rebuild_at(ui.now() + Duration::from_millis(120));
         }
     }

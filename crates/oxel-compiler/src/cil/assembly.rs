@@ -81,11 +81,21 @@ pub(super) fn write(
         .sum();
     // Keep source method IDs stable. Each synthetic method gets a contiguous
     // range for its immediate children, regardless of nesting depth.
-    let mut methods: Vec<_> = program.functions.iter().collect();
+    let mut methods: Vec<_> = program
+        .functions
+        .iter()
+        .map(std::sync::Arc::as_ref)
+        .collect();
     let mut owners: Vec<_> = program
         .functions
         .iter()
         .map(|function| function.namespace.as_deref())
+        .collect();
+    let mut offsets: Vec<_> = program
+        .functions
+        .iter()
+        .zip(&program.current_function_starts)
+        .map(|(function, &start)| (function.span.start, start))
         .collect();
     let mut lambda_bases = Vec::new();
     while let Some(function) = methods.get(lambda_bases.len()).copied() {
@@ -93,6 +103,9 @@ pub(super) fn write(
         lambda_bases.push(methods.len());
         methods.extend(&function.lambdas);
         owners.extend(std::iter::repeat_n(owner, function.lambdas.len()));
+        if let Some(&offset) = offsets.get(lambda_bases.len() - 1) {
+            offsets.extend(std::iter::repeat_n(offset, function.lambdas.len()));
+        }
     }
     let source_method_count = methods.len();
     let mut order: Vec<_> = (0..source_method_count).collect();
@@ -169,6 +182,19 @@ pub(super) fn write(
     let mut async_steps = Vec::new();
     for (method_index, logical_id) in order.into_iter().enumerate() {
         let (function, lambda_base) = (methods[logical_id], lambda_bases[logical_id]);
+        let rebase = |span: Span| {
+            if let Some(&(from, to)) = offsets.get(logical_id)
+                && span.start >= from
+            {
+                Span {
+                    start: to + (span.start - from),
+                    end: to + (span.end - from),
+                }
+            } else {
+                span
+            }
+        };
+        let span = rebase(function.span);
         metadata.add_type_parameters(
             index(TableId::MethodDef, method_index as u32 + 1),
             &function.type_parameters,
@@ -188,7 +214,7 @@ pub(super) fn write(
                 );
                 body.parameter_offset = u16::from(function.captures_environment);
                 body.emit(block);
-                body.write(&mut text, function.span)?;
+                body.write(&mut text, span)?;
                 (TEXT_RVA + CLI_HEADER_SIZE + offset, 0, 0, &[][..])
             }
             MethodBody::Async(block, plan) => {
@@ -203,9 +229,13 @@ pub(super) fn write(
                     true,
                 );
                 body.parameter_offset = u16::from(function.captures_environment);
-                let frame_size =
-                    body.emit_async_step(block, **plan, &function.signature.parameters)?;
-                body.write(&mut text, function.span)?;
+                let frame_size = body
+                    .emit_async_step(block, **plan, &function.signature.parameters)
+                    .map_err(|mut error| {
+                        error.map_spans(rebase);
+                        error
+                    })?;
+                body.write(&mut text, span)?;
                 async_steps.push((step_rva, function));
                 let type_arguments: Vec<_> = (0..function.signature.type_arity)
                     .map(Type::MethodParameter)
@@ -217,7 +247,7 @@ pub(super) fn write(
                 let empty = Default::default();
                 let mut body = Body::new(&mut metadata, 0, &[], &empty, false);
                 body.emit_async_start(frame_size, step, **plan, &function.signature.parameters);
-                body.write(&mut text, function.span)?;
+                body.write(&mut text, span)?;
                 (rva, 0, 0, &[][..])
             }
             MethodBody::Native {
@@ -226,7 +256,7 @@ pub(super) fn write(
                 if let Some(wrapper) = native.wrapper(logical_id) {
                     text.align(4);
                     let rva = TEXT_RVA + CLI_HEADER_SIZE + image_offset(text.len())?;
-                    wrapper.emit(&mut text, &mut metadata, function, parameters)?;
+                    wrapper.emit(&mut text, &mut metadata, function, parameters, span)?;
                     wrapper_parameters = parameters
                         .iter()
                         .map(|&mode| match mode {
@@ -253,7 +283,7 @@ pub(super) fn write(
             metadata.add_parameters(&function.signature, parameters, &function.parameter_names);
         let (flags, name) = if logical_id < program.functions.len() {
             let access = if function.internal { 0x0003 } else { 0x0006 }; // assembly or public
-            (0x0090 | access, metadata.strings.add(function.name)) // static hidebysig
+            (0x0090 | access, metadata.strings.add(&function.name)) // static hidebysig
         } else {
             (
                 0x0091,
@@ -739,7 +769,7 @@ impl<'refs> Tables<'refs> {
         &mut self,
         signature: &Signature,
         parameters: &[ParameterPassing],
-        names: &[Option<&str>],
+        names: &[Option<Box<str>>],
     ) -> u32 {
         let first = self.parameters.len() as u32 + 1;
         for (sequence, ty) in std::iter::once(signature.result)
@@ -760,8 +790,7 @@ impl<'refs> Tables<'refs> {
             let name = sequence
                 .checked_sub(1)
                 .and_then(|index| names.get(index))
-                .copied()
-                .flatten();
+                .and_then(Option::as_deref);
             if nullable.is_empty() && flags == 0 && name.is_none() {
                 continue;
             }
@@ -1215,7 +1244,7 @@ impl<'refs> Tables<'refs> {
     fn add_type_parameters(
         &mut self,
         owner: CodedIndex,
-        parameters: &[&str],
+        parameters: &[impl AsRef<str>],
         bounds: &[GenericBound],
     ) {
         let mut bounds = bounds.iter().peekable();
@@ -1245,7 +1274,7 @@ impl<'refs> Tables<'refs> {
                     number,
                     flags,
                     owner,
-                    name: self.strings.add(name),
+                    name: self.strings.add(name.as_ref()),
                 },
                 bounds: constraints,
             });

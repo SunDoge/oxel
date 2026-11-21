@@ -219,13 +219,7 @@ impl<'sources, 'src> Project<'sources, 'src> {
         } else {
             Err(errors)
         };
-        result.map_err(|mut errors| {
-            errors.sort_by_key(|error| error.span.start);
-            errors
-                .into_iter()
-                .map(|error| self.map.locate(error))
-                .collect()
-        })
+        result.map_err(|errors| self.map.locate_all(errors))
     }
 }
 
@@ -234,6 +228,11 @@ pub(crate) struct SourceMap {
 }
 
 impl SourceMap {
+    pub fn locate_all(&self, mut errors: Vec<Diagnostic>) -> Vec<SourceDiagnostic> {
+        errors.sort_by_key(|error| error.span.start);
+        errors.into_iter().map(|error| self.locate(error)).collect()
+    }
+
     pub fn local_span(&self, span: crate::Span) -> Option<(usize, crate::Span)> {
         let source = self
             .bases

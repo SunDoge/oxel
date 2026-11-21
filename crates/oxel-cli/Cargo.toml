@@ -21,6 +21,7 @@ ctrlc = { version = "3.5", features = ["termination"] }
 oxel-compiler = { version = "0.1.0", path = "../oxel-compiler" }
 lsp-server = "0.7"
 lsp-types = "0.97"
+notify = "8.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 roxmltree = { version = "0.21", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }

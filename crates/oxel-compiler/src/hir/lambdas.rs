@@ -287,7 +287,7 @@ impl<'src> Checker<'_, 'src> {
         let mut parameter_names: Vec<_> = source
             .parameters
             .iter()
-            .map(|&(name, _)| Some(name))
+            .map(|&(name, _)| Some(name.into()))
             .collect();
         let environment = if captures_environment {
             let environment_type = self.types.array(Type::NullableObject, span)?;
@@ -325,12 +325,16 @@ impl<'src> Checker<'_, 'src> {
             namespace: None,
             has_exception_regions,
             internal: true,
-            name: "<lambda>",
+            name: "<lambda>".into(),
             span,
             signature,
             parameter_names,
             captures_environment,
-            type_parameters: self.type_parameters.iter().map(|&(name, _)| name).collect(),
+            type_parameters: self
+                .type_parameters
+                .iter()
+                .map(|&(name, _)| name.into())
+                .collect(),
             locals,
             captured_cells,
             body,

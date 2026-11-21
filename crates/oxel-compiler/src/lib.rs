@@ -9,7 +9,7 @@ mod syntax;
 
 pub use analysis::{
     CallParameters, CallableSignature, DocumentAnalysis, Occurrence, OccurrenceKind,
-    ProjectAnalyzer, Symbol, SymbolKind, inspect_document, inspect_project,
+    ProjectAnalyzer, ProjectCompiler, Symbol, SymbolKind, inspect_document, inspect_project,
     inspect_project_with_kind,
 };
 pub use clr::{References, valid_assembly_name};

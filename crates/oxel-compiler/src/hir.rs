@@ -3,6 +3,7 @@ mod assignment;
 pub(crate) mod asynchronous;
 mod bounds;
 mod builtin_types;
+mod compilation;
 mod constants;
 mod entry;
 mod hierarchy;
@@ -28,6 +29,7 @@ use std::{
 
 pub(crate) use arrays::ArrayAccess;
 pub use builtin_types::Type;
+pub(crate) use compilation::{CompilationCache, lower_cached};
 pub(crate) use constants::EvaluationCache;
 use hierarchy::DataMember;
 pub(crate) use hierarchy::Member;
@@ -216,7 +218,8 @@ impl fmt::Display for Type {
 }
 
 pub(crate) struct Program<'src> {
-    pub functions: Vec<Function<'src>>,
+    pub functions: Vec<Arc<Function>>,
+    pub current_function_starts: Vec<usize>,
     pub structs: Vec<Struct<'src>>,
     pub instances: Vec<TypeInstance>,
     pub entry: Option<usize>,
@@ -286,11 +289,13 @@ struct Structs<'src, 'refs> {
     scopes: Scopes<'src>,
     definitions: Vec<Struct<'src>>,
     arities: Vec<usize>,
-    instances: RwLock<TypeInstances>,
+    instances: Arc<RwLock<TypeInstances>>,
     layouts_ready: bool,
     deferred_constructor_checks: AtomicBool,
     field_info: usize,
     field_info_used: AtomicBool,
+    builtin_option: Option<usize>,
+    option_used: AtomicBool,
 }
 
 impl<'src, 'refs> Structs<'src, 'refs> {
@@ -298,6 +303,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         declarations: &[&syntax::TypeDefinition<'src>],
         references: &'refs References,
         scopes: Scopes<'src>,
+        instances: Arc<RwLock<TypeInstances>>,
     ) -> Checked<Self> {
         let mut names = HashMap::new();
         for (id, declaration) in declarations.iter().enumerate() {
@@ -336,11 +342,13 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 .chain(builtin_option.then_some(1))
                 .chain(std::iter::once(0))
                 .collect(),
-            instances: RwLock::default(),
+            instances,
             layouts_ready: false,
             deferred_constructor_checks: AtomicBool::new(false),
             field_info: declarations.len() + usize::from(builtin_option),
             field_info_used: AtomicBool::new(false),
+            builtin_option: builtin_option.then_some(declarations.len()),
+            option_used: AtomicBool::new(false),
         };
         for declaration in declarations {
             validate_type_parameters(&declaration.type_parameters, declaration.span)?;
@@ -721,6 +729,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             }
             id
         };
+        if let InstanceKind::Struct(definition) = kind
+            && self.builtin_option == Some(definition)
+        {
+            self.option_used.store(true, Ordering::Relaxed);
+            compilation::record_builtin(compilation::OPTION);
+        }
         Ok(match kind {
             InstanceKind::External(_) if external_value => Type::ConstructedClrStruct(id),
             InstanceKind::External(_) => Type::ConstructedExternal(id),
@@ -931,6 +945,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
 
     fn field_info_type(&self) -> Type {
         self.field_info_used.store(true, Ordering::Relaxed);
+        compilation::record_builtin(compilation::FIELD_INFO);
         Type::Struct(self.field_info)
     }
 
@@ -1162,20 +1177,20 @@ impl<'src, 'refs> Structs<'src, 'refs> {
     }
 }
 
-pub(crate) struct Function<'src> {
+pub(crate) struct Function {
     pub namespace: Option<Box<str>>,
     pub has_exception_regions: bool,
     pub internal: bool,
-    pub name: &'src str,
+    pub name: Box<str>,
     pub span: Span,
     pub signature: Signature,
-    pub parameter_names: Vec<Option<&'src str>>,
+    pub parameter_names: Vec<Option<Box<str>>>,
     pub captures_environment: bool,
-    pub type_parameters: Vec<&'src str>,
+    pub type_parameters: Vec<Box<str>>,
     pub locals: Vec<Type>,
     pub captured_cells: HashSet<u16>,
     pub body: MethodBody,
-    pub lambdas: Vec<Function<'src>>,
+    pub lambdas: Vec<Function>,
 }
 
 pub(crate) enum MethodBody {
@@ -1459,7 +1474,7 @@ pub(crate) fn check(
     kind: Option<AssemblyKind>,
 ) -> Result<(), Vec<Diagnostic>> {
     let entry = kind.map_or(EntryPoint::None, EntryPoint::for_build);
-    prepare(file, references, entry, None, None)?.check_runtime(drop, |()| {})
+    prepare(file, references, entry, None, None, Arc::default())?.check_runtime(drop, |()| {})
 }
 
 pub(crate) fn lower<'src>(
@@ -1476,15 +1491,24 @@ pub(crate) fn lower<'src>(
     } else {
         EntryPoint::for_build(kind)
     };
-    let scope = prepare(file, references, mode, None, None)?;
+    let scope = prepare(file, references, mode, None, None, Arc::default())?;
     let mut functions = Vec::with_capacity(scope.runtime_functions().len());
-    scope.check_runtime(std::convert::identity, |function| functions.push(function))?;
+    scope.check_runtime(Arc::new, |function| functions.push(function))?;
+    finish_program(scope, functions, kind, tests)
+}
+
+fn finish_program<'src>(
+    scope: ModuleScope<'_, 'src, '_>,
+    mut functions: Vec<Arc<Function>>,
+    kind: AssemblyKind,
+    tests: Option<TestOptions<'_>>,
+) -> Result<Program<'src>, Vec<Diagnostic>> {
     let entry = if let Some(options) = tests {
         let runner =
             test_harness::runner(scope.runtime_functions(), &functions, &scope.types, options)
                 .map_err(|error| vec![error])?;
         let entry = functions.len();
-        functions.push(runner);
+        functions.push(Arc::new(runner));
         Some(entry)
     } else {
         scope
@@ -1496,23 +1520,20 @@ pub(crate) fn lower<'src>(
     if !scope.types.field_info_used.load(Ordering::Relaxed) {
         structs.pop();
     }
-    let instances = scope
-        .types
-        .instances
-        .into_inner()
-        .expect("type interner")
-        .values;
+    let instances = match Arc::try_unwrap(scope.types.instances) {
+        Ok(instances) => instances.into_inner().expect("type interner").values,
+        Err(instances) => instances.read().expect("type interner").values.clone(),
+    };
     if let Some(last) = structs.last()
         && last.builtin
         && last.name == "Option"
-        && !instances
-            .iter()
-            .any(|instance| instance.kind == InstanceKind::Struct(structs.len() - 1))
+        && !scope.types.option_used.load(Ordering::Relaxed)
     {
         structs.pop();
     }
     Ok(Program {
         functions,
+        current_function_starts: Vec::new(),
         structs,
         instances,
         entry,
@@ -1536,6 +1557,7 @@ pub(crate) fn inspect(
         },
         Some(occurrences),
         cache.as_deref_mut(),
+        Arc::default(),
     ) {
         Ok(scope) => scope,
         Err(errors) => return errors,
@@ -1634,9 +1656,11 @@ fn prepare<'ast, 'src, 'refs>(
     entry_point: EntryPoint,
     mut occurrences: Option<&mut Vec<Occurrence>>,
     cache: Option<&mut analysis::BodyCache>,
+    instances: Arc<RwLock<TypeInstances>>,
 ) -> Result<ModuleScope<'ast, 'src, 'refs>, Vec<Diagnostic>> {
     let scopes = Scopes::new(&file.scopes).map_err(|error| vec![error])?;
-    let types = Structs::collect(&file.types, references, scopes).map_err(|error| vec![error])?;
+    let types = Structs::collect(&file.types, references, scopes, instances)
+        .map_err(|error| vec![error])?;
     let mut functions = file.functions;
     // Runtime method IDs stay dense even though comptime functions share the
     // module namespace and type checker.
@@ -1907,7 +1931,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
 
     fn check_runtime<R: Send>(
         &self,
-        finish: impl Fn(Function<'src>) -> R + Sync + Send,
+        finish: impl Fn(Function) -> R + Sync + Send,
         mut accept: impl FnMut(R),
     ) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
@@ -1932,7 +1956,7 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
         index: usize,
         occurrences: Option<&mut Vec<Occurrence>>,
         lookups: Option<&mut Vec<Lookup<'src>>>,
-    ) -> Checked<Function<'src>> {
+    ) -> Checked<Function> {
         let function = self.functions[index];
         let signature = &self.signatures[index];
         let types = &self.types;
@@ -2055,19 +2079,19 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             namespace: types.scopes.namespace(function.name_span).map(Into::into),
             has_exception_regions: checker.has_exception_regions,
             internal: function.internal,
-            name: function.name,
+            name: function.name.into(),
             span: function.name_span,
             signature: signature.clone(),
             parameter_names: function
                 .parameters
                 .iter()
-                .map(|param| Some(param.name))
+                .map(|param| Some(param.name.into()))
                 .collect(),
             captures_environment: false,
             type_parameters: function
                 .type_parameters
                 .iter()
-                .map(|&(name, _)| name)
+                .map(|&(name, _)| name.into())
                 .collect(),
             locals: checker.locals,
             captured_cells: checker.captured_cells,
@@ -2440,7 +2464,8 @@ pub fn clr_function_signatures(name: &str, references: &References) -> Vec<Calla
     if candidates.is_empty() {
         return Vec::new();
     }
-    let types = Structs::collect(&[], references, Scopes::default()).expect("no source types");
+    let types = Structs::collect(&[], references, Scopes::default(), Arc::default())
+        .expect("no source types");
     candidates
         .iter()
         .filter_map(|&id| {
@@ -2636,7 +2661,7 @@ struct Checker<'a, 'src> {
     nonnull: Vec<Value>,
     capture: Option<lambdas::CaptureScope<'a, 'src>>,
     captured_cells: HashSet<u16>,
-    lambdas: Vec<Function<'src>>,
+    lambdas: Vec<Function>,
 }
 
 impl<'a, 'src> Checker<'a, 'src> {
