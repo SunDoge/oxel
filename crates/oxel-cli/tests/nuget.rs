@@ -183,7 +183,10 @@ fn locked_runs_reuse_complete_bundles_and_rebuild_after_changes() {
             .unwrap()
             .path();
         let pointer = fs::read_to_string(entry.join("latest")).unwrap();
-        let bundle = entry.join(pointer.lines().next().unwrap()).join("output");
+        let metadata: serde_json::Value = serde_json::from_str(&pointer).unwrap();
+        let bundle = entry
+            .join(metadata["directory"].as_str().unwrap())
+            .join("output");
         (entry, pointer, bundle)
     };
     let run = |argument: &str| {
@@ -224,14 +227,18 @@ fn locked_runs_reuse_complete_bundles_and_rebuild_after_changes() {
     assert_eq!(run("reference edit"), ["31", "reference edit"]);
 
     let source = root.join("app/main.oxel");
-    fs::write(&source, "fn main() { System.Console.WriteLine(42); }").unwrap();
+    let edited = "fn main() { System.Console.WriteLine(Fixture.Facade.Number() + 12); }";
+    fs::write(&source, edited).unwrap();
+    let dependencies = fs::read_dir(&cache).unwrap().count();
     assert_eq!(run("source edit"), ["42"]);
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), dependencies);
+    assert_eq!(run("source edit reused"), ["42"]);
     fs::write(&source, "fn main() { missing(); }").unwrap();
     let error = fixture.with_flags("run", &["--locked"], None);
     assert!(!error.status.success());
     assert!(String::from_utf8(error.stderr).unwrap().contains("E0203"));
 
-    fs::write(&source, "fn main() { System.Console.WriteLine(42); }").unwrap();
+    fs::write(&source, edited).unwrap();
     fs::remove_file(lock).unwrap();
     let error = fixture.with_flags("run", &["--locked"], None);
     assert!(!error.status.success());

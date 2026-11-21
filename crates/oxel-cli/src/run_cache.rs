@@ -1,4 +1,4 @@
-//! Reuses complete SDK-built bundles for unchanged, locked NuGet runs.
+//! Reuses the SDK's dependency outputs across edits to locked NuGet scripts.
 
 use std::{
     env,
@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{Package, artifact_directory, manifest, sdk, write_file};
+use serde::{Deserialize, Serialize};
 
 pub(super) struct Inputs<'a> {
     pub package: Package<'a>,
@@ -21,11 +22,32 @@ pub(super) struct Inputs<'a> {
 pub(super) struct Cache {
     lock: PathBuf,
     files: Vec<PathBuf>,
+    sources: Vec<PathBuf>,
     project: PathBuf,
     manifest_hash: blake3::Hash,
     base: blake3::Hasher,
     entry: PathBuf,
     key: blake3::Hash,
+    source_key: blake3::Hash,
+}
+
+pub(super) enum Hit {
+    Exact(PathBuf),
+    Edit(tempfile::TempDir, sdk::RunReferences),
+}
+
+#[derive(Deserialize, Serialize)]
+struct Record {
+    directory: String,
+    bundle_hash: [u8; 32],
+    source_hash: [u8; 32],
+    references: Option<ReferenceRecord>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ReferenceRecord {
+    inputs: sdk::RunReferences,
+    hash: [u8; 32],
 }
 
 impl Cache {
@@ -38,7 +60,6 @@ impl Cache {
         }
         let files: Vec<_> = [inputs.package.manifest, lock.as_path()]
             .into_iter()
-            .chain(inputs.sources.iter().map(PathBuf::as_path))
             .chain(inputs.references.iter().map(PathBuf::as_path))
             .chain(
                 inputs
@@ -49,15 +70,13 @@ impl Cache {
             )
             .map(Path::to_path_buf)
             .collect();
-        let mut base = blake3::Hasher::new_derive_key("oxel locked run bundle v1");
+        let mut base = blake3::Hasher::new_derive_key("oxel locked run bundle v2");
         field(&mut base, project.as_os_str().as_encoded_bytes());
         field(&mut base, selection.0.as_bytes());
         field(&mut base, selection.1.as_bytes());
         field(&mut base, format!("{:?}", inputs.framework).as_bytes());
         base.update(&[u8::from(inputs.debug)]);
-        for length in [inputs.sources.len(), inputs.references.len()] {
-            base.update(&(length as u64).to_le_bytes());
-        }
+        base.update(&(inputs.references.len() as u64).to_le_bytes());
         let mut vars: Vec<_> = env::vars_os().collect();
         vars.sort_unstable();
         for (name, value) in vars {
@@ -82,17 +101,20 @@ impl Cache {
             field(&mut base, value.as_encoded_bytes());
         }
         let key = fingerprint(&base, &files, &project, inputs.manifest_hash).ok()?;
+        let source_key = paths_hash("oxel run sources", inputs.sources).ok()?;
         let entry = artifact_directory(&project)
             .join("run-cache")
             .join(key.to_hex().as_str());
         Some(Self {
             lock,
             files,
+            sources: inputs.sources.to_vec(),
             project,
             manifest_hash: inputs.manifest_hash,
             base,
             entry,
             key,
+            source_key,
         })
     }
 
@@ -100,27 +122,47 @@ impl Cache {
         &self.lock
     }
 
-    pub fn lookup(&self, name: &str) -> Option<PathBuf> {
-        let record = fs::read_to_string(self.entry.join("latest")).ok()?;
-        let (directory, digest) = record.trim_end().split_once('\n')?;
-        if !directory.starts_with("bundle-")
-            || Path::new(directory).file_name() != Some(OsStr::new(directory))
+    pub fn lookup(&self, name: &str) -> Option<Hit> {
+        let record: Record =
+            serde_json::from_slice(&fs::read(self.entry.join("latest")).ok()?).ok()?;
+        if !record.directory.starts_with("bundle-")
+            || Path::new(&record.directory).file_name() != Some(OsStr::new(&record.directory))
         {
             return None;
         }
-        let digest = blake3::Hash::from_hex(digest).ok()?;
-        let bundle = self.entry.join(directory).join("output");
-        let dll = bundle.join(format!("{name}.dll"));
-        (fs::symlink_metadata(&bundle).ok()?.is_dir()
-            && dll.is_file()
-            && sdk::folder_hash(&bundle).ok()? == digest)
-            .then_some(dll)
+        let bundle = self.entry.join(record.directory).join("output");
+        let assembly = format!("{name}.dll");
+        let dll = bundle.join(&assembly);
+        if !fs::symlink_metadata(&bundle).ok()?.is_dir()
+            || !dll.is_file()
+            || sdk::folder_hash(&bundle).ok()?.as_bytes() != &record.bundle_hash
+        {
+            return None;
+        }
+        if self.source_key.as_bytes() == &record.source_hash {
+            return Some(Hit::Exact(dll));
+        }
+        let references = record.references?;
+        if reference_hash(&references.inputs).ok()?.as_bytes() != &references.hash {
+            return None;
+        }
+        let stage = tempfile::Builder::new()
+            .prefix(".edit-")
+            .tempdir_in(&self.entry)
+            .ok()?;
+        stage_assets(&bundle, stage.path(), Some(OsStr::new(&assembly))).ok()?;
+        Some(Hit::Edit(stage, references.inputs))
     }
 
-    pub fn publish(&self, output: &Path) -> Option<PathBuf> {
+    pub fn publish(
+        &self,
+        output: &Path,
+        references: Option<sdk::RunReferences>,
+    ) -> Option<PathBuf> {
         // The SDK and compiler read inputs independently. Publish only for a
         // snapshot that still matches the one taken before building.
         if fingerprint(&self.base, &self.files, &self.project, self.manifest_hash).ok()? != self.key
+            || paths_hash("oxel run sources", &self.sources).ok()? != self.source_key
         {
             return None;
         }
@@ -130,15 +172,67 @@ impl Cache {
             .prefix("bundle-")
             .tempdir_in(&self.entry)
             .ok()?;
-        let record = format!("{}\n{digest}\n", stage.path().file_name()?.to_str()?);
+        let record = Record {
+            directory: stage.path().file_name()?.to_str()?.to_owned(),
+            bundle_hash: *digest.as_bytes(),
+            source_hash: *self.source_key.as_bytes(),
+            references: references.and_then(|inputs| {
+                let hash = *reference_hash(&inputs).ok()?.as_bytes();
+                Some(ReferenceRecord { inputs, hash })
+            }),
+        };
+        let record = serde_json::to_vec(&record).ok()?;
         let bundle = stage.path().join("output");
         // Rename the completed SDK output as a unit. The pointer is replaced
         // only after the bundle is complete, even when two builds finish together.
         fs::rename(output, &bundle).ok()?;
         let _ = stage.keep();
-        let _ = write_file(&self.entry.join("latest"), record.as_bytes());
+        let _ = write_file(&self.entry.join("latest"), &record);
         Some(bundle)
     }
+}
+
+fn stage_assets(source: &Path, destination: &Path, skip: Option<&OsStr>) -> io::Result<()> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if Some(name.as_os_str()) == skip {
+            continue;
+        }
+        let path = entry.path();
+        let destination = destination.join(name);
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            fs::create_dir(&destination)?;
+            stage_assets(&path, &destination, None)?;
+        } else if kind.is_file() {
+            if fs::hard_link(&path, &destination).is_err() {
+                fs::copy(&path, &destination)?;
+            }
+        } else {
+            return Err(io::Error::other("invalid cached runtime asset"));
+        }
+    }
+    Ok(())
+}
+
+fn reference_hash(inputs: &sdk::RunReferences) -> io::Result<blake3::Hash> {
+    let mut hash = blake3::Hasher::new_derive_key("oxel cached SDK references");
+    for paths in [&inputs.packages, &inputs.framework, &inputs.build_files] {
+        hash.update(&(paths.len() as u64).to_le_bytes());
+        for path in paths {
+            hash_file(&mut hash, path)?;
+        }
+    }
+    Ok(hash.finalize())
+}
+
+fn paths_hash(domain: &str, paths: &[PathBuf]) -> io::Result<blake3::Hash> {
+    let mut hash = blake3::Hasher::new_derive_key(domain);
+    for path in paths {
+        hash_file(&mut hash, path)?;
+    }
+    Ok(hash.finalize())
 }
 
 fn fingerprint(

@@ -40,6 +40,7 @@ struct Run {
     reload: Option<(PathBuf, bool)>,
     debug: bool,
     cache: Option<run_cache::Cache>,
+    edit_bundle: Option<tempfile::TempDir>,
 }
 
 fn main() -> ExitCode {
@@ -168,12 +169,28 @@ fn cli(run: &mut Run) -> ExitCode {
                 debug,
             };
             run.cache = run_cache::Cache::prepare(inputs, selection);
-            if let Some(dll) = run
+            if let Some(hit) = run
                 .cache
                 .as_ref()
                 .and_then(|cache| cache.lookup(package.name))
             {
-                return run_dll(package.manifest, &dll, format, run);
+                match hit {
+                    run_cache::Hit::Exact(dll) => {
+                        return run_dll(package.manifest, &dll, format, run);
+                    }
+                    run_cache::Hit::Edit(bundle, cached) => {
+                        run.edit_bundle = Some(bundle);
+                        return execute(
+                            action,
+                            &sources,
+                            &references,
+                            Some(package),
+                            Some(&sdk::Resolution::Cached(cached)),
+                            format,
+                            run,
+                        );
+                    }
+                }
             }
         }
     }
@@ -402,6 +419,25 @@ fn execute(
         Err(errors) => return format.report(paths, &sources, errors),
     };
 
+    if let Some(bundle) = application.edit_bundle.take() {
+        let dll = bundle.path().join(format!("{name}.dll"));
+        if let Err(error) = write_file(&dll, &bytes) {
+            return format.error(
+                origin,
+                "E0004",
+                format!("could not write assembly: {error}"),
+            );
+        }
+        let output = match (application.cache.as_ref(), restored) {
+            (Some(cache), Some(sdk::Resolution::Cached(inputs))) => {
+                cache.publish(bundle.path(), Some(inputs.clone()))
+            }
+            _ => None,
+        };
+        let dll = output.map_or(dll, |path| path.join(format!("{name}.dll")));
+        return run_dll(origin, &dll, format, application);
+    }
+
     let libraries = package.map_or(&[][..], |package| package.native_libraries);
     if let Some(restored) = restored.and_then(sdk::Resolution::project) {
         let output = match restored.build(name, &bytes, &dependencies) {
@@ -421,7 +457,7 @@ fn execute(
                     .cache
                     .as_ref()
                     .filter(|cache| restored.lock.as_deref() == Some(cache.lock()))
-                    .and_then(|cache| cache.publish(&output))
+                    .and_then(|cache| cache.publish(&output, restored.run_references()))
                     .unwrap_or(output);
                 return run_dll(
                     origin,
@@ -516,9 +552,8 @@ fn load_references(
         .into_iter()
         .flat_map(sdk::Resolution::framework_references);
     let packages = sdk
-        .and_then(sdk::Resolution::project)
         .into_iter()
-        .flat_map(|project| &project.references);
+        .flat_map(sdk::Resolution::package_references);
     let paths = framework
         .map(|path| (path, false, true))
         .chain(reference_paths.iter().map(|path| (path, true, false)))

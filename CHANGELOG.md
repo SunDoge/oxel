@@ -20,7 +20,7 @@
 - Use CLR `Span<T>` and `ReadOnlySpan<T>` to index zero-copy views and pass them to supported .NET methods.
 - Create CLR delegates with lambdas in ordinary or generic functions, pass them as callbacks and call them directly with `callback(value)`.
 - Lower short string interpolations to fixed-arity CLR concatenation calls without a temporary string array.
-- Reuse verified executable bundles for unchanged NuGet scripts with a lock file.
+- Reuse verified executable bundles for unchanged NuGet scripts with a lock file, and reuse compatible SDK references and runtime files after source edits.
 - Annotate unit tests with `#[test]`. Use `oxel test` to execute them, `--list` to discover them, `--filter` to select tests by name, and `oxel check --tests` to check a module. Add `#[ignore]` to skip an individual test by default and use `--include-ignored` to run skipped tests. Put separate test files under `test_sources` in `oxel.toml`.
 - Format project sources and tests with `oxel fmt`. Use `oxel fmt --check` to check formatting without modifying files.
 - Use the standard `Result<T, E>` without declaring a result enum in each module. Existing module definitions still resolve locally.

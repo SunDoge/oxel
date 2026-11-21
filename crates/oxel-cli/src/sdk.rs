@@ -1,6 +1,7 @@
 //! Stages SDK projects for framework and NuGet references and packaging.
 
 mod framework;
+mod run_inputs;
 
 use std::{
     collections::BTreeMap,
@@ -73,7 +74,10 @@ pub(super) enum Resolution {
     Installed(InstalledFramework),
     Framework(Vec<PathBuf>),
     Project(SdkProject),
+    Cached(run_inputs::References),
 }
+
+pub(super) use run_inputs::References as RunReferences;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Framework {
@@ -98,6 +102,15 @@ impl Resolution {
             Self::Project(project) => &project.framework_references,
             Self::Framework(references) => references,
             Self::Installed(pack) => &pack.references,
+            Self::Cached(inputs) => &inputs.framework,
+        }
+    }
+
+    pub fn package_references(&self) -> &[PathBuf] {
+        match self {
+            Self::Project(project) => &project.references,
+            Self::Cached(inputs) => &inputs.packages,
+            _ => &[],
         }
     }
 
@@ -250,6 +263,14 @@ fn stage_project(project: &Path) -> io::Result<tempfile::TempDir> {
 }
 
 impl SdkProject {
+    pub fn run_references(&self) -> Option<RunReferences> {
+        run_inputs::read(
+            self.stage.path(),
+            self.references.clone(),
+            self.framework_references.clone(),
+        )
+    }
+
     pub(super) fn restore(
         (manifest, selected): (&Path, Option<&(String, String)>),
         name: &str,
