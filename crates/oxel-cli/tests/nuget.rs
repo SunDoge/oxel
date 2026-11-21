@@ -66,10 +66,22 @@ impl Fixture {
         fixture.pack_leaf(leaf_version, 15);
         let root = fixture.workspace.path();
         fs::write(
+            root.join("facade").join(format!("{facade}.targets")),
+            r#"<Project>
+              <Target Name="SnapshotFixtureAnalyzers">
+                <ItemGroup><_OxelFixtureAnalyzers Include="@(Analyzer)" /></ItemGroup>
+              </Target>
+              <Target Name="FilterFixtureAnalyzers" BeforeTargets="CoreCompile" DependsOnTargets="SnapshotFixtureAnalyzers">
+                <ItemGroup><Analyzer Remove="@(_OxelFixtureAnalyzers)" /></ItemGroup>
+              </Target>
+            </Project>"#,
+        ).unwrap();
+        fs::write(
             root.join("facade/Facade.csproj"),
             project(&facade, &format!(r#"<ItemGroup>
               <PackageReference Include="{leaf}" Version="{leaf_range}" />
               <None Include="obj/Release/{framework}/ref/Facade.dll" Pack="true" PackagePath="ref/{framework}/Facade.dll" />
+              <None Update="{facade}.targets" Pack="true" PackagePath="buildTransitive/{facade}.targets" />
             </ItemGroup>"#)),
         ).unwrap();
         fs::write(root.join("facade/Facade.cs"), "namespace Fixture; public static class Facade { public static int Number() => Leaf.Number() * 2; }").unwrap();
@@ -199,6 +211,12 @@ fn locked_runs_reuse_complete_bundles_and_rebuild_after_changes() {
 
     assert_eq!(run("first"), ["30", "first"]);
     let (entry, pointer, bundle) = record(&cache);
+    let metadata: serde_json::Value = serde_json::from_str(&pointer).unwrap();
+    let build_files = metadata["references"]["inputs"]["build_files"]
+        .as_array()
+        .unwrap();
+    assert_eq!(build_files.len(), 1);
+    assert!(build_files[0].as_str().unwrap().ends_with(".targets"));
     assert_eq!(run("again"), ["30", "again"]);
     assert_eq!(fs::read_to_string(entry.join("latest")).unwrap(), pointer);
 
