@@ -1,0 +1,48 @@
+use System::{Action, Environment, Exception, Func};
+
+fn main() -> i32 {
+    let Some(directory) = Environment.GetEnvironmentVariable("OXEL_RELOAD_DIRECTORY") else {
+        System.Console.Error.WriteLine("Start this host with oxel dev.");
+        return 1;
+    };
+    let mut seen = reload_generation(directory);
+    let mut view = load_view::<Func<i32, i32[], Action<i32, i32, i32, string, bool>, i32>>(
+        directory, seen, "Oxel.Plico.View.Program", "counter",
+    );
+    let mut count = 0;
+    let mut started = false;
+    let status = run_counter(1) |address, len| {
+        let generation = try_reload_generation(directory) ?? seen;
+        if generation != seen {
+            seen = generation;
+            try {
+                let candidate = load_view::<Func<i32, i32[], Action<i32, i32, i32, string, bool>, i32>>(
+                    directory, generation, "Oxel.Plico.View.Program", "counter",
+                );
+                if let Some(next) = render_counter(count, counter_events(address, len), candidate.invoke) {
+                    view.context.Unload();
+                    view = candidate;
+                    count = next;
+                    started = true;
+                    System.Console.WriteLine($"Reloaded view {generation}");
+                    return 0;
+                }
+                candidate.context.Unload();
+            } catch (error: Exception) {
+                System.Console.Error.WriteLine($"Reload rejected: {error.Message}");
+            }
+        }
+        if len == 0 && started {
+            return 0;
+        }
+        if let Some(next) = render_counter(count, counter_events(address, len), view.invoke) {
+            count = next;
+            started = true;
+            0
+        } else {
+            1
+        }
+    };
+    view.context.Unload();
+    status
+}

@@ -1,0 +1,40 @@
+use System::{Delegate, Exception, InvalidOperationException};
+use System::IO::{File, FileAccess, FileMode, FileShare, FileStream, MemoryStream, Path, StreamReader};
+use System::Runtime::Loader::AssemblyLoadContext;
+
+struct LoadedView<T: Delegate> {
+    context: AssemblyLoadContext,
+    invoke: T,
+}
+
+fn reload_generation(directory: string) -> string {
+    using stream = new FileStream(Path.Combine(directory, "current"), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete) {
+        using reader = new StreamReader(stream) {
+            reader.ReadToEnd()
+        }
+    }
+}
+
+fn try_reload_generation(directory: string) -> Option<string> {
+    try {
+        let generation = reload_generation(directory);
+        Option.Some(generation)
+    } catch (error: Exception) {
+        Option.None
+    }
+}
+
+fn load_view<T: Delegate>(directory: string, generation: string, type_name: string, method_name: string) -> LoadedView<T> {
+    let context = new AssemblyLoadContext($"oxel-view-{generation}", true);
+    try {
+        let assembly = using stream = new MemoryStream(File.ReadAllBytes(Path.Combine(directory, $"{generation}.dll"))) {
+            context.LoadFromStream(stream)
+        };
+        let ty = assembly.GetType(type_name) ?? throw new InvalidOperationException($"Missing reload type {type_name}");
+        let method = ty.GetMethod(method_name) ?? throw new InvalidOperationException($"Missing reload method {method_name}");
+        LoadedView::<T> { context: context, invoke: method.CreateDelegate::<T>() }
+    } catch (error: Exception) {
+        context.Unload();
+        throw error
+    }
+}

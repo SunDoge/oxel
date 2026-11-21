@@ -1,0 +1,5 @@
+[package]
+name = "oxel-plico-dev"
+framework = true
+sources = ["dev.oxel", "host.oxel", "../hot_reload/loader.oxel", "target/plico.ffi.oxel"]
+native_libraries = ["native/target/debug/liboxel_plico_counter.so"]

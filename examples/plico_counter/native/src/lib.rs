@@ -4,6 +4,7 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     slice,
+    time::Duration,
 };
 
 use batch::Batch;
@@ -41,18 +42,18 @@ thread_local! {
 /// remains live until this call returns.
 #[doc = "oxel: callback build"]
 #[unsafe(no_mangle)]
-pub extern "C" fn run_counter(build: Build) -> i32 {
+pub extern "C" fn run_counter(poll_reload: i32, build: Build) -> i32 {
     if RUNNING.replace(true) {
         return 1;
     }
-    let status = std::panic::catch_unwind(|| run(build)).unwrap_or(1);
+    let status = std::panic::catch_unwind(|| run(build, poll_reload != 0)).unwrap_or(1);
     REPLY.replace(Reply::Idle);
     RUNNING.set(false);
     status
 }
 
-fn run(build: Build) -> i32 {
-    let Some(batch) = request_batch(build, &[]) else {
+fn run(build: Build, poll_reload: bool) -> i32 {
+    let Ok(Some(batch)) = request_batch(build, &[]) else {
         eprintln!("Plico counter received no valid initial view");
         return 1;
     };
@@ -61,6 +62,7 @@ fn run(build: Build) -> i32 {
         build,
         batch,
         failed: Rc::clone(&failed),
+        poll_reload,
     };
     let options = WindowOptions::new()
         .title("Oxel Plico Counter")
@@ -116,12 +118,13 @@ pub unsafe extern "C" fn submit(
     })
 }
 
-fn request_batch(build: Build, events: &[i32]) -> Option<Batch> {
+fn request_batch(build: Build, events: &[i32]) -> Result<Option<Batch>, ()> {
     REPLY.replace(Reply::Awaiting);
     let status = build(events.as_ptr(), events.len() as i32);
     match REPLY.replace(Reply::Idle) {
-        Reply::Ready(batch) if status == 0 => Some(batch),
-        _ => None,
+        Reply::Ready(batch) if status == 0 => Ok(Some(batch)),
+        Reply::Awaiting if status == 0 && events.is_empty() => Ok(None),
+        _ => Err(()),
     }
 }
 
@@ -129,6 +132,7 @@ struct Counter {
     build: Build,
     batch: Batch,
     failed: Rc<Cell<bool>>,
+    poll_reload: bool,
 }
 
 impl View for Counter {
@@ -138,14 +142,21 @@ impl View for Counter {
 
     fn show(&mut self, ui: &mut UiContext<'_>) {
         let events = self.batch.show(ui);
-        if !events.is_empty() && !self.failed.get() {
-            if let Some(batch) = request_batch(self.build, &events) {
-                self.batch = batch;
-                ui.request_rebuild();
-            } else {
-                eprintln!("Plico counter rejected a view update");
-                self.failed.set(true);
+        if (!events.is_empty() || self.poll_reload) && !self.failed.get() {
+            match request_batch(self.build, &events) {
+                Ok(Some(batch)) => {
+                    self.batch = batch;
+                    ui.request_rebuild();
+                }
+                Ok(None) => {}
+                Err(()) => {
+                    eprintln!("Plico counter rejected a view update");
+                    self.failed.set(true);
+                }
             }
+        }
+        if self.poll_reload && !self.failed.get() {
+            ui.request_rebuild_at(ui.now() + Duration::from_millis(120));
         }
     }
 }

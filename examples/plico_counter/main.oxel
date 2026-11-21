@@ -1,85 +1,15 @@
-use System::{Action, Exception};
-use System::Collections::Generic::{Dictionary, List};
-use System::Runtime::InteropServices::Marshal;
-use System::Text::Encoding;
-
-const COLUMN = 1;
-const ROW = 2;
-const LABEL = 3;
-const BUTTON = 4;
-
-struct Frame {
-    commands: List<Command>,
-    titles: List<u8>,
-    actions: Dictionary<i32, Action>,
-    parent: i32,
-}
-
-fn node(frame: Frame, kind: i32, key: i32, title: string, flags: i32) -> i32 {
-    let index = frame.commands.Count;
-    let start = frame.titles.Count;
-    for byte in Encoding.UTF8.GetBytes(title) {
-        frame.titles.Add(byte);
-    }
-    frame.commands.Add(Command {
-        kind: kind,
-        key: key,
-        parent: frame.parent,
-        title_start: start,
-        title_len: frame.titles.Count - start,
-        flags: flags,
-    });
-    index
-}
-
-fn column(frame: Frame, key: i32, children: Action<Frame>) {
-    let index = node(frame, COLUMN, key, "", 0);
-    children(Frame { parent: index, ..frame });
-}
-
-fn row(frame: Frame, key: i32, children: Action<Frame>) {
-    let index = node(frame, ROW, key, "", 0);
-    children(Frame { parent: index, ..frame });
-}
-
-fn text(frame: Frame, key: i32, title: string) {
-    node(frame, LABEL, key, title, 0);
-}
-
-fn button(frame: Frame, key: i32, title: string, enabled: bool, click: Action) {
-    node(frame, BUTTON, key, title, if enabled { 0 } else { 1 });
-    if enabled {
-        frame.actions.Add(key, click);
-    }
-}
+use System::{Action, Func};
 
 fn main() -> i32 {
+    let view: Func<i32, i32[], Action<i32, i32, i32, string, bool>, i32> = |count, events, draw| {
+        counter(count, events, draw)
+    };
     let mut count = 0;
-    let actions = new Dictionary<i32, Action>();
-    run_counter() |events, len| {
-        try {
-            for index in 0..len {
-                let key = Marshal.ReadInt32(events, index * 4);
-                if actions.ContainsKey(key) {
-                    let click = actions[key];
-                    click();
-                }
-            }
-            actions.Clear();
-            let commands = new List<Command>();
-            let titles = new List<u8>();
-            let frame = Frame { commands: commands, titles: titles, actions: actions, parent: -1 };
-            column(frame, 1) |ui| {
-                text(ui, 2, $"Count: {count}");
-                row(ui, 3) |actions| {
-                    button(actions, 4, "Decrement", true) { count -= 1; };
-                    button(actions, 5, "Reset", count != 0) { count = 0; };
-                    button(actions, 6, "Increment", true) { count += 1; }
-                }
-            };
-            submit(commands.ToArray(), titles.ToArray())
-        } catch (error: Exception) {
-            System.Console.Error.WriteLine(error.Message);
+    run_counter(0) |address, len| {
+        if let Some(next) = render_counter(count, counter_events(address, len), view) {
+            count = next;
+            0
+        } else {
             1
         }
     }

@@ -1,0 +1,5 @@
+[package]
+name = "Oxel.Plico.View"
+kind = "library"
+framework = true
+sources = ["view.oxel"]

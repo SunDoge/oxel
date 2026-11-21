@@ -1,6 +1,7 @@
 mod aot;
 mod arguments;
 mod bindgen;
+mod dev;
 mod diagnostics;
 mod lsp;
 mod manifest;
@@ -34,6 +35,7 @@ const RUNTIME_CONFIG: &str = r#"{
 struct Run {
     arguments: Vec<OsString>,
     status: Option<i32>,
+    reload: Option<(PathBuf, bool)>,
 }
 
 fn main() -> ExitCode {
@@ -57,11 +59,13 @@ fn cli(run: &mut Run) -> ExitCode {
         mut sources,
         mut references,
         arguments,
+        reload_manifest,
     } = match arguments::parse() {
         Ok(options) => options,
         Err(exit) => return exit,
     };
     run.arguments = arguments;
+    run.reload = reload_manifest.map(|path| (path, locked));
     if let Action::Bindgen(inputs) = action {
         return bindgen::run(inputs, format);
     }
@@ -542,12 +546,16 @@ fn run(
 }
 
 fn run_dll(source: &Path, dll: &Path, format: Format, application: &mut Run) -> ExitCode {
-    match Command::new("dotnet")
-        .arg("exec")
-        .arg(dll)
-        .args(&application.arguments)
-        .status()
-    {
+    let mut command = Command::new("dotnet");
+    command.arg("exec").arg(dll).args(&application.arguments);
+    let status = if let Some((manifest, locked)) = &application.reload {
+        dev::run(command, manifest, *locked, format)
+    } else {
+        command
+            .status()
+            .map_err(|err| format.error(source, "E0005", format!("could not launch dotnet: {err}")))
+    };
+    match status {
         Ok(status) => {
             application.status = status.code();
             if status.success() {
@@ -556,7 +564,7 @@ fn run_dll(source: &Path, dll: &Path, format: Format, application: &mut Run) -> 
                 ExitCode::FAILURE
             }
         }
-        Err(err) => format.error(source, "E0005", format!("could not launch dotnet: {err}")),
+        Err(exit) => exit,
     }
 }
 

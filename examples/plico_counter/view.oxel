@@ -1,0 +1,50 @@
+use System::Action;
+
+const COLUMN = 1;
+const ROW = 2;
+const LABEL = 3;
+const BUTTON = 4;
+
+internal struct Ui {
+    declare: Action<i32, i32, i32, string, bool>,
+    parent: i32,
+}
+
+internal fn column(ui: Ui, key: i32, children: Action<Ui>) {
+    (ui.declare)(COLUMN, key, ui.parent, "", true);
+    children(Ui { parent: key, ..ui });
+}
+
+internal fn row(ui: Ui, key: i32, children: Action<Ui>) {
+    (ui.declare)(ROW, key, ui.parent, "", true);
+    children(Ui { parent: key, ..ui });
+}
+
+internal fn text(ui: Ui, key: i32, title: string) {
+    (ui.declare)(LABEL, key, ui.parent, title, true);
+}
+
+internal fn button(ui: Ui, key: i32, title: string, enabled: bool) {
+    (ui.declare)(BUTTON, key, ui.parent, title, enabled);
+}
+
+fn counter(count: i32, events: i32[], declare: Action<i32, i32, i32, string, bool>) -> i32 {
+    let mut next = count;
+    for key in events {
+        match key {
+            4 => { next -= 1; },
+            5 => { next = 0; },
+            6 => { next += 1; },
+            _ => {}
+        }
+    }
+    column(Ui { declare: declare, parent: -1 }, 1) |ui| {
+        text(ui, 2, $"Count: {next}");
+        row(ui, 3) |actions| {
+            button(actions, 4, "Decrement", true);
+            button(actions, 5, "Reset", next != 0);
+            button(actions, 6, "Increment", true);
+        }
+    };
+    next
+}

@@ -79,7 +79,7 @@ The manifest uses the Avalonia Desktop and Fluent Theme packages. To run the Nat
 
 ### Plico desktop experiment
 
-The [Plico counter](examples/plico_counter/main.oxel) uses the same immediate-style view and trailing lambdas with a Rust window host. Oxel holds the counter state and receives a batch of activated button keys. It submits a command array and a UTF-8 buffer together. The Rust host copies the accepted batch and declares its keyed nodes through Plico, which handles reconciliation, layout, input, and drawing. Plico's desktop host provides the winit event loop and wgpu renderer.
+The [Plico counter view](examples/plico_counter/view.oxel) uses the same immediate-style view and trailing lambdas with a Rust window host. The Oxel host holds the counter state and passes activated button keys to the view. It submits a command array and a UTF-8 buffer together. The Rust host copies the accepted batch and declares its keyed nodes through Plico, which handles reconciliation, layout, input, and drawing. Plico's desktop host provides the winit event loop and wgpu renderer.
 
 Build the pinned Rust host and generate its bindings before running the example. The manifest packages the Linux shared library. The Rust host is an independent Cargo workspace under the example.
 
@@ -93,6 +93,19 @@ oxel publish --manifest-path examples/plico_counter/oxel.toml
 ```
 
 Run the window in a Linux graphical session with working wgpu drivers and the system libraries needed by Plico for text. Use Tab to focus a button and Space to activate it. The host keeps the callback alive until the window closes. It invokes Oxel for the initial view and after activations while Plico can repaint the current batch independently. The experiment packages a desktop executable. Mobile runtime and application packaging are separate integration work.
+
+### Hot reload on CoreCLR
+
+After building the Plico host and generating its bindings, start the development host.
+
+```sh
+oxel dev --manifest-path examples/plico_counter/dev.toml \
+  --reload-manifest examples/plico_counter/view.toml
+```
+
+Raise the count, then edit the label or increment logic in [view.oxel](examples/plico_counter/view.oxel) and save. The view updates in the existing window and keeps the count. Compiler diagnostics appear in the terminal while the last usable view stays active. Closing the window or pressing Ctrl+C stops the development session.
+
+`oxel dev` watches the sources in a `kind = "library"` reload manifest, reuses its resolved references, and publishes each successful build to the directory in `OXEL_RELOAD_DIRECTORY`. The directory's `current` file names the latest generation number, and `<generation>.dll` contains that assembly. The [example loader](examples/hot_reload/loader.oxel) binds a public function to a CLR delegate in a collectible load context. The [Plico development host](examples/plico_counter/dev.oxel) switches delegates on the UI thread after accepting the new view's batch. Keep persistent state and shared dependencies in the host. Restart the session to pick up host, manifest, dependency or native library changes. Use the regular Plico manifest for Native AOT publishing.
 
 ## Multi-file modules
 

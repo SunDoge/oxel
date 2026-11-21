@@ -1,0 +1,44 @@
+use System::{Action, Exception, Func};
+use System::Collections::Generic::{Dictionary, List};
+use System::Runtime::InteropServices::Marshal;
+use System::Text::Encoding;
+
+fn render_counter(count: i32, events: i32[], render: Func<i32, i32[], Action<i32, i32, i32, string, bool>, i32>) -> Option<i32> {
+    try {
+        let commands = new List<Command>();
+        let titles = new List<u8>();
+        let nodes = new Dictionary<i32, i32>();
+        let next = render(count, events) |kind, key, parent, title, enabled| {
+            let start = titles.Count;
+            for byte in Encoding.UTF8.GetBytes(title) {
+                titles.Add(byte);
+            }
+            nodes.Add(key, commands.Count);
+            commands.Add(Command {
+                kind: kind,
+                key: key,
+                parent: if parent == -1 { -1 } else { nodes[parent] },
+                title_start: start,
+                title_len: titles.Count - start,
+                flags: if enabled { 0 } else { 1 },
+            });
+        };
+        if submit(commands.ToArray(), titles.ToArray()) != 0 {
+            System.Console.Error.WriteLine("Plico rejected the view batch");
+            Option.None
+        } else {
+            Option.Some(next)
+        }
+    } catch (error: Exception) {
+        System.Console.Error.WriteLine(error.Message);
+        Option.None
+    }
+}
+
+fn counter_events(address: nint, len: i32) -> i32[] {
+    let events = new i32[len];
+    for index in 0..len {
+        events[index] = Marshal.ReadInt32(address, index * 4);
+    }
+    events
+}

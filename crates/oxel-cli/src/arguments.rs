@@ -40,6 +40,8 @@ enum Command {
     Check(CheckInputs),
     /// Compile and run on CoreCLR.
     Run(RunInputs),
+    /// Run a CoreCLR host and recompile its reloadable library on source changes.
+    Dev(DevInputs),
     /// Compile and run Oxel unit tests on CoreCLR.
     Test(TestInputs),
     /// Publish a native executable with the .NET SDK.
@@ -77,6 +79,15 @@ struct RunInputs {
     /// Arguments passed to the program after --.
     #[usage(double_dash = "required")]
     arguments: Vec<OsString>,
+}
+
+#[derive(Args)]
+struct DevInputs {
+    #[usage(flatten)]
+    run: RunInputs,
+    /// Library manifest for the code reloaded by the running host.
+    #[usage(long)]
+    reload_manifest: PathBuf,
 }
 
 #[derive(Args)]
@@ -155,6 +166,7 @@ pub(super) struct Options {
     pub sources: Vec<PathBuf>,
     pub references: Vec<PathBuf>,
     pub arguments: Vec<OsString>,
+    pub reload_manifest: Option<PathBuf>,
 }
 
 pub(super) fn parse() -> Result<Options, ExitCode> {
@@ -184,17 +196,25 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
         }
     };
     let format = parsed.diagnostic_format;
-    if !matches!(parsed.command, Command::Run(_)) && argv.contains(&OsStr::new("--")) {
-        return Err(usage_error(format, "only oxel run accepts --"));
+    if !matches!(parsed.command, Command::Run(_) | Command::Dev(_))
+        && argv.contains(&OsStr::new("--"))
+    {
+        return Err(usage_error(format, "only oxel run and dev accept --"));
     }
     let mut native = false;
     let mut arguments = Vec::new();
+    let mut reload_manifest = None;
     let (action, build) = match parsed.command {
         Command::Compile(build) => (Action::Compile, build),
         Command::Check(check) => (Action::Check { tests: check.tests }, check.build),
         Command::Run(run) => {
             arguments = run.arguments;
             (Action::Run, run.build)
+        }
+        Command::Dev(dev) => {
+            reload_manifest = Some(dev.reload_manifest);
+            arguments = dev.run.arguments;
+            (Action::Run, dev.run.build)
         }
         Command::Test(test) => (
             Action::Test {
@@ -241,6 +261,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
         sources: build.sources,
         references: build.reference,
         arguments,
+        reload_manifest,
     })
 }
 
