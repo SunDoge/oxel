@@ -50,7 +50,7 @@ fn cli(run: &mut Run) -> ExitCode {
     let Options {
         action,
         format,
-        mut framework,
+        framework,
         locked,
         mut manifest_path,
         native,
@@ -86,13 +86,20 @@ fn cli(run: &mut Run) -> ExitCode {
             }
         }
     }
+    let mut framework = if framework {
+        sdk::Framework::Core
+    } else {
+        sdk::Framework::None
+    };
     let mut nuget = Default::default();
     let package = if let Some(path) = &manifest_path {
         let manifest = match manifest::Manifest::load(path, format) {
             Ok(manifest) => manifest,
             Err(exit) => return exit,
         };
-        framework |= manifest.framework;
+        if manifest.framework != sdk::Framework::None {
+            framework = manifest.framework;
+        }
         nuget = manifest.nuget;
         sources = manifest.sources;
         if matches!(
@@ -126,7 +133,8 @@ fn cli(run: &mut Run) -> ExitCode {
             "managed libraries can be built with oxel compile and require an executable host",
         );
     }
-    let restored = if framework || !nuget.is_empty() {
+    let has_framework = framework != sdk::Framework::None;
+    let restored = if has_framework || !nuget.is_empty() {
         let lock_mode = if locked {
             sdk::LockMode::Required
         } else if restore_only {
@@ -147,15 +155,15 @@ fn cli(run: &mut Run) -> ExitCode {
         } else {
             (Path::new(manifest::DEFAULT), "oxel_editor")
         };
-        let resolution = if framework && nuget.is_empty() {
+        let resolution = if has_framework && nuget.is_empty() {
             match action {
                 Action::Check { .. } | Action::Lsp { .. } | Action::Test { list: true, .. } => {
-                    sdk::probe_framework(path, name).ok()
+                    sdk::probe_framework(path, name, framework).ok()
                 }
                 Action::Compile | Action::Run | Action::Test { list: false, .. }
                     if references.is_empty() =>
                 {
-                    sdk::installed_framework(path)
+                    sdk::installed_framework(path, framework)
                 }
                 _ => None,
             }
@@ -185,7 +193,7 @@ fn cli(run: &mut Run) -> ExitCode {
         match resolution {
             Ok(project) => Some(project),
             Err(error) => {
-                let failure = if framework {
+                let failure = if has_framework {
                     "SDK framework/reference resolution failed"
                 } else {
                     "NuGet restore failed"

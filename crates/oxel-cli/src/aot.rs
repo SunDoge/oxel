@@ -43,6 +43,7 @@ pub(super) fn publish(
             true,
             &Default::default(),
             oxel::AssemblyKind::Executable,
+            sdk::Framework::None,
         ),
     )?;
 

@@ -186,6 +186,7 @@ pub(super) fn write(
                     &function.captured_cells,
                     function.has_exception_regions,
                 );
+                body.parameter_offset = u16::from(function.captures_environment);
                 body.emit(block);
                 body.write(&mut text, function.span)?;
                 (TEXT_RVA + CLI_HEADER_SIZE + offset, 0, 0, &[][..])
@@ -201,6 +202,7 @@ pub(super) fn write(
                     &function.captured_cells,
                     true,
                 );
+                body.parameter_offset = u16::from(function.captures_environment);
                 let frame_size =
                     body.emit_async_step(block, **plan, &function.signature.parameters)?;
                 body.write(&mut text, function.span)?;
@@ -247,7 +249,8 @@ pub(super) fn write(
             function.signature.type_arity,
             parameters.iter().map(|parameter| (parameter.mode(), false)),
         );
-        let param_list = metadata.add_parameters(&function.signature, parameters);
+        let param_list =
+            metadata.add_parameters(&function.signature, parameters, &function.parameter_names);
         let (flags, name) = if logical_id < program.functions.len() {
             let access = if function.internal { 0x0003 } else { 0x0006 }; // assembly or public
             (0x0090 | access, metadata.strings.add(function.name)) // static hidebysig
@@ -282,7 +285,7 @@ pub(super) fn write(
             parameters: vec![Type::NullableObject],
             result: Type::Void,
         };
-        let param_list = metadata.add_parameters(&signature, &[]);
+        let param_list = metadata.add_parameters(&signature, &[], &[]);
         let signature = metadata.method_signature(
             &[Type::NullableObject],
             Type::Void,
@@ -732,7 +735,12 @@ impl<'refs> Tables<'refs> {
         });
     }
 
-    fn add_parameters(&mut self, signature: &Signature, parameters: &[ParameterPassing]) -> u32 {
+    fn add_parameters(
+        &mut self,
+        signature: &Signature,
+        parameters: &[ParameterPassing],
+        names: &[Option<&str>],
+    ) -> u32 {
         let first = self.parameters.len() as u32 + 1;
         for (sequence, ty) in std::iter::once(signature.result)
             .chain(signature.parameters.iter().copied())
@@ -749,13 +757,18 @@ impl<'refs> Tables<'refs> {
                 Some(ParameterPassing::Callback(_)) => 0x2000,
                 _ => 0,
             };
-            if nullable.is_empty() && flags == 0 {
+            let name = sequence
+                .checked_sub(1)
+                .and_then(|index| names.get(index))
+                .copied()
+                .flatten();
+            if nullable.is_empty() && flags == 0 && name.is_none() {
                 continue;
             }
             self.parameters.push(ParamRow {
                 flags,
                 sequence: sequence as u16,
-                ..Default::default()
+                name: name.map_or(0, |name| self.strings.add(name)),
             });
             let parent = index(TableId::Param, self.parameters.len() as u32);
             self.add_nullable_attribute(parent, &nullable);

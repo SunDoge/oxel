@@ -155,6 +155,7 @@ struct Body<'a, 'refs> {
     loops: Vec<LoopFrame>,
     tries: Vec<TryFrame>,
     lambda_base: usize,
+    parameter_offset: u16,
     locals: &'a [Type],
     captured_cells: &'a HashSet<u16>,
     has_exception_regions: bool,
@@ -183,6 +184,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             loops: Vec::new(),
             tries: Vec::new(),
             lambda_base,
+            parameter_offset: 0,
             locals,
             captured_cells,
             has_exception_regions,
@@ -1351,12 +1353,16 @@ impl<'a, 'refs> Body<'a, 'refs> {
 
     fn captured_object(&mut self, slot: usize, base: usize) {
         self.max_stack = self.max_stack.max(base + 2);
-        self.load_parameter(0);
+        self.load_raw_parameter(0);
         self.load_i32(slot as i32);
         self.op(0x9a); // ldelem.ref
     }
 
     fn load_parameter(&mut self, index: u16) {
+        self.load_raw_parameter(index + self.parameter_offset);
+    }
+
+    fn load_raw_parameter(&mut self, index: u16) {
         if let Some(state) = &self.async_state {
             self.indexed(0x11, 0x0c, state.parameter(index)); // ldloc
         } else if index == 0 {
@@ -1402,6 +1408,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             match value {
                 Value::Local(index) => self.indexed(0x12, 0x0d, index), // ldloca
                 Value::Parameter(index) => {
+                    let index = index + self.parameter_offset;
                     if let Some(state) = &self.async_state {
                         self.indexed(0x12, 0x0d, state.parameter(index)); // ldloca
                     } else {

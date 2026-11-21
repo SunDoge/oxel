@@ -12,7 +12,11 @@ use oxel::{AssemblyKind, Diagnostic, Span};
 use serde::Deserialize;
 use toml::Spanned;
 
-use crate::{diagnostics::Format, native_assets::NativeLibrary};
+use crate::{
+    diagnostics::Format,
+    native_assets::NativeLibrary,
+    sdk::{ASP_NET_CORE_NAME, CORE_NAME, Framework},
+};
 
 pub(super) const DEFAULT: &str = "oxel.toml";
 
@@ -24,7 +28,7 @@ pub(super) struct Manifest {
     pub references: Vec<PathBuf>,
     pub native_libraries: Vec<NativeLibrary>,
     pub nuget: BTreeMap<String, String>,
-    pub framework: bool,
+    pub framework: Framework,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +53,8 @@ struct Package {
     native_libraries: Vec<Spanned<PathBuf>>,
     #[serde(default)]
     framework: bool,
+    #[serde(default)]
+    framework_references: Vec<Spanned<String>>,
 }
 
 impl Manifest {
@@ -112,6 +118,32 @@ impl Manifest {
             "test source",
             &mut source_paths,
         )?;
+        let mut framework = if package.framework {
+            Framework::Core
+        } else {
+            Framework::None
+        };
+        let mut framework_names = HashSet::new();
+        for reference in &package.framework_references {
+            let name = reference.get_ref().as_str();
+            if !framework_names.insert(name) {
+                return Err(invalid(
+                    reference.span(),
+                    format!("duplicate framework reference '{name}'"),
+                ));
+            }
+            match name {
+                ASP_NET_CORE_NAME => framework = Framework::AspNetCore,
+                CORE_NAME if framework == Framework::None => framework = Framework::Core,
+                CORE_NAME => {}
+                _ => {
+                    return Err(invalid(
+                        reference.span(),
+                        format!("unsupported framework reference '{name}'"),
+                    ));
+                }
+            }
+        }
         Ok(Self {
             name: package.name.into_inner(),
             kind,
@@ -125,7 +157,7 @@ impl Manifest {
             )?,
             native_libraries: native_libraries(directory, package.native_libraries)?,
             nuget: packages(nuget)?,
-            framework: package.framework,
+            framework,
         })
     }
 }

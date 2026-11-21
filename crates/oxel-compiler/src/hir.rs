@@ -1169,6 +1169,8 @@ pub(crate) struct Function<'src> {
     pub name: &'src str,
     pub span: Span,
     pub signature: Signature,
+    pub parameter_names: Vec<Option<&'src str>>,
+    pub captures_environment: bool,
     pub type_parameters: Vec<&'src str>,
     pub locals: Vec<Type>,
     pub captured_cells: HashSet<u16>,
@@ -2056,6 +2058,12 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
             name: function.name,
             span: function.name_span,
             signature: signature.clone(),
+            parameter_names: function
+                .parameters
+                .iter()
+                .map(|param| Some(param.name))
+                .collect(),
+            captures_environment: false,
             type_parameters: function
                 .type_parameters
                 .iter()

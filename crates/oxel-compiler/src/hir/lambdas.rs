@@ -243,7 +243,7 @@ impl<'src> Checker<'_, 'src> {
             let previous = nested.scopes[0].insert(
                 name,
                 Binding {
-                    value: Value::Parameter(index as u16 + 1),
+                    value: Value::Parameter(index as u16),
                     ty,
                     mutable: false,
                     uninitialized: false,
@@ -283,20 +283,35 @@ impl<'src> Checker<'_, 'src> {
         };
         let lambdas = nested.lambdas;
         let captured_cells = nested.captured_cells;
-        let environment_type = self.types.array(Type::NullableObject, span)?;
-        signature.parameters.insert(0, environment_type);
-        let items = captures
-            .uses
-            .into_iter()
-            .map(|value| self.coerce(value, Type::NullableObject))
+        let captures_environment = !captures.uses.is_empty();
+        let mut parameter_names: Vec<_> = source
+            .parameters
+            .iter()
+            .map(|&(name, _)| Some(name))
             .collect();
-        let environment = Expr {
-            kind: ExprKind::ArrayLiteral {
-                element: Type::NullableObject,
-                items,
-            },
-            ty: environment_type,
-            span,
+        let environment = if captures_environment {
+            let environment_type = self.types.array(Type::NullableObject, span)?;
+            signature.parameters.insert(0, environment_type);
+            parameter_names.insert(0, None);
+            Expr {
+                kind: ExprKind::ArrayLiteral {
+                    element: Type::NullableObject,
+                    items: captures
+                        .uses
+                        .into_iter()
+                        .map(|value| self.coerce(value, Type::NullableObject))
+                        .collect(),
+                },
+                ty: environment_type,
+                span,
+            }
+        } else {
+            // Bind an open static delegate. Reflection sees only the delegate's parameters.
+            Expr {
+                kind: ExprKind::Null,
+                ty: Type::NullableObject,
+                span,
+            }
         };
         let method = self.lambdas.len();
         // The synthetic method has the same generic context as its enclosing
@@ -313,6 +328,8 @@ impl<'src> Checker<'_, 'src> {
             name: "<lambda>",
             span,
             signature,
+            parameter_names,
+            captures_environment,
             type_parameters: self.type_parameters.iter().map(|&(name, _)| name).collect(),
             locals,
             captured_cells,

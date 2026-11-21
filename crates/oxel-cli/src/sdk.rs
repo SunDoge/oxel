@@ -75,6 +75,16 @@ pub(super) enum Resolution {
     Project(SdkProject),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Framework {
+    None,
+    Core,
+    AspNetCore,
+}
+
+pub(super) const CORE_NAME: &str = "Microsoft.NETCore.App";
+pub(super) const ASP_NET_CORE_NAME: &str = "Microsoft.AspNetCore.App";
+
 impl Resolution {
     pub fn project(&self) -> Option<&SdkProject> {
         match self {
@@ -102,22 +112,31 @@ impl Resolution {
 pub(super) struct InstalledFramework {
     framework: String,
     runtime_version: String,
+    aspnet_runtime_version: Option<String>,
     references: Vec<PathBuf>,
 }
 
 impl InstalledFramework {
     pub fn runtime_config(&self) -> String {
-        serde_json::json!({
+        let mut config = serde_json::json!({
             "runtimeOptions": {
                 "tfm": self.framework,
-                "framework": { "name": "Microsoft.NETCore.App", "version": self.runtime_version },
                 "configProperties": {
                     "System.Reflection.Metadata.MetadataUpdater.IsSupported": false,
                     "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false
                 }
             }
-        })
-        .to_string()
+        });
+        let core = serde_json::json!({ "name": CORE_NAME, "version": self.runtime_version });
+        let options = &mut config["runtimeOptions"];
+        if let Some(version) = &self.aspnet_runtime_version {
+            options["frameworks"] = serde_json::json!([
+                core, { "name": ASP_NET_CORE_NAME, "version": version }
+            ]);
+        } else {
+            options["framework"] = core;
+        }
+        config.to_string()
     }
 
     pub fn deps(&self, name: &str) -> String {
@@ -138,7 +157,7 @@ impl InstalledFramework {
     }
 }
 
-pub(super) fn installed_framework(manifest: &Path) -> Option<Resolution> {
+pub(super) fn installed_framework(manifest: &Path, framework: Framework) -> Option<Resolution> {
     let project = manifest::directory(manifest);
     let project = std::path::absolute(if project.as_os_str().is_empty() {
         Path::new(".")
@@ -146,13 +165,17 @@ pub(super) fn installed_framework(manifest: &Path) -> Option<Resolution> {
         project
     })
     .ok()?;
-    framework::installed_references(&project).map(Resolution::Installed)
+    framework::installed_references(&project, framework).map(Resolution::Installed)
 }
 
 /// Resolves installed targeting packs through the selected SDK without restoring packages.
 /// The caller uses the normal restore path if the probe cannot resolve the framework.
-pub(super) fn probe_framework(manifest: &Path, name: &str) -> SdkResult<Resolution> {
-    if let Some(installed) = installed_framework(manifest) {
+pub(super) fn probe_framework(
+    manifest: &Path,
+    name: &str,
+    framework: Framework,
+) -> SdkResult<Resolution> {
+    if let Some(installed) = installed_framework(manifest, framework) {
         return Ok(installed);
     }
     let project = manifest::directory(manifest);
@@ -161,10 +184,14 @@ pub(super) fn probe_framework(manifest: &Path, name: &str) -> SdkResult<Resoluti
     } else {
         project
     })?;
-    probe_framework_msbuild(&project, name).map(Resolution::Framework)
+    probe_framework_msbuild(&project, name, framework).map(Resolution::Framework)
 }
 
-fn probe_framework_msbuild(project: &Path, name: &str) -> SdkResult<Vec<PathBuf>> {
+fn probe_framework_msbuild(
+    project: &Path,
+    name: &str,
+    framework: Framework,
+) -> SdkResult<Vec<PathBuf>> {
     let stage = stage_project(project)?;
     let root = stage.path();
     // An intermediate global.json must not override the SDK selected from the
@@ -183,6 +210,7 @@ fn probe_framework_msbuild(project: &Path, name: &str) -> SdkResult<Vec<PathBuf>
             false,
             &BTreeMap::new(),
             AssemblyKind::Executable,
+            framework,
         ),
     )?;
     let output = invoke(
@@ -228,7 +256,7 @@ impl SdkProject {
         packages: &BTreeMap<String, String>,
         native: bool,
         mode: LockMode,
-        include_framework: bool,
+        references_framework: Framework,
         kind: AssemblyKind,
     ) -> SdkResult<Self> {
         let project = manifest::directory(manifest);
@@ -240,7 +268,14 @@ impl SdkProject {
         pin(root, &sdk)?;
         fs::write(
             root.join("oxel.csproj"),
-            project_xml(name, &framework, native, packages, kind),
+            project_xml(
+                name,
+                &framework,
+                native,
+                packages,
+                kind,
+                references_framework,
+            ),
         )?;
 
         let rid = if native {
@@ -277,7 +312,7 @@ impl SdkProject {
         if let Some(rid) = &rid {
             args.push(format!("-p:RuntimeIdentifier={rid}"));
         }
-        if include_framework {
+        if references_framework != Framework::None {
             args.push("-p:OxelResolveFramework=ResolveTargetingPackAssets".into());
         }
         let lock = lock_path(manifest, &framework, rid.as_deref());
@@ -315,7 +350,7 @@ impl SdkProject {
             result?;
         }
         let references = read_references(&root.join("oxel.references"), false)?;
-        let framework_references = if include_framework {
+        let framework_references = if references_framework != Framework::None {
             framework_references(root)?
         } else {
             Vec::new()
@@ -527,9 +562,17 @@ pub(super) fn project_xml(
     native: bool,
     packages: &BTreeMap<String, String>,
     kind: AssemblyKind,
+    references_framework: Framework,
 ) -> String {
     use std::fmt::Write as _;
     let mut package_items = String::new();
+    if references_framework == Framework::AspNetCore {
+        writeln!(
+            package_items,
+            r#"    <FrameworkReference Include="{ASP_NET_CORE_NAME}" />"#
+        )
+        .expect("write to string");
+    }
     for (id, version) in packages {
         writeln!(
             package_items,
@@ -567,7 +610,7 @@ pub(super) fn project_xml(
   <Target Name="OxelReferences" DependsOnTargets="ResolvePackageAssets;$(OxelResolveFramework)">
     <WriteLinesToFile File="oxel.references" Lines="@(ResolvedCompileFileDefinitions)" Overwrite="true" Encoding="UTF-8" />
     <ItemGroup Condition="'$(OxelResolveFramework)' != ''">
-      <OxelFrameworkReference Include="@(Reference)" Condition="'%(Reference.FrameworkReferenceName)' == 'Microsoft.NETCore.App'" />
+      <OxelFrameworkReference Include="@(Reference)" Condition="'%(Reference.FrameworkReferenceName)' == '{CORE_NAME}' Or '%(Reference.FrameworkReferenceName)' == '{ASP_NET_CORE_NAME}'" />
     </ItemGroup>
     <WriteLinesToFile Condition="'$(OxelResolveFramework)' != ''" File="oxel.framework" Lines="@(OxelFrameworkReference)" Overwrite="true" Encoding="UTF-8" />
   </Target>

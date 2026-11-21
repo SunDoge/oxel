@@ -133,6 +133,8 @@ pub(super) fn runner<'src>(
             parameters: Vec::new(),
             result: Type::I32,
         },
+        parameter_names: Vec::new(),
+        captures_environment: false,
         type_parameters: Vec::new(),
         locals,
         captured_cells: Default::default(),

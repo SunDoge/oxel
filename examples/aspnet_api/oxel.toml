@@ -1,0 +1,4 @@
+[package]
+name = "aspnet_api"
+sources = ["main.oxel"]
+framework_references = ["Microsoft.AspNetCore.App"]

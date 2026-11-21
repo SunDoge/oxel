@@ -100,6 +100,8 @@ impl Entry {
             name: "<oxel_main>",
             span,
             signature,
+            parameter_names: Vec::new(),
+            captures_environment: false,
             type_parameters: Vec::new(),
             locals,
             captured_cells: Default::default(),

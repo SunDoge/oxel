@@ -7,9 +7,15 @@ use std::{
 
 use roxmltree::Document;
 
-use super::{InstalledFramework, artifact_directory, invoke, sdk_version};
+use super::{
+    ASP_NET_CORE_NAME, CORE_NAME, Framework, InstalledFramework, artifact_directory, invoke,
+    sdk_version,
+};
 
-pub(super) fn installed_references(project: &Path) -> Option<InstalledFramework> {
+pub(super) fn installed_references(
+    project: &Path,
+    selection: Framework,
+) -> Option<InstalledFramework> {
     // Leave SDK policies, response files, and custom imports to MSBuild.
     let physical_project = fs::canonicalize(project).ok()?;
     let artifacts = artifact_directory(project);
@@ -59,11 +65,23 @@ pub(super) fn installed_references(project: &Path) -> Option<InstalledFramework>
     if exists_or_inaccessible(&sdk.join("MSBuild.rsp")) {
         return None;
     }
-    let (pack, runtime_version) = targeting_pack(&sdk, base.parent()?, &framework)?;
-    let references = reference_files(&pack, &framework)?;
+    let root = base.parent()?;
+    let props = fs::read_to_string(sdk.join("Microsoft.NETCoreSdk.BundledVersions.props")).ok()?;
+    let doc = Document::parse(&props).ok()?;
+    let (pack, runtime_version) = targeting_pack(&doc, root, &framework, CORE_NAME)?;
+    let mut references = reference_files(&pack, &framework, CORE_NAME)?;
+    let aspnet_runtime_version = if selection == Framework::AspNetCore {
+        let (pack, version) = targeting_pack(&doc, root, &framework, ASP_NET_CORE_NAME)?;
+        references.extend(reference_files(&pack, &framework, ASP_NET_CORE_NAME)?);
+        references.sort_unstable();
+        Some(version)
+    } else {
+        None
+    };
     Some(InstalledFramework {
         framework,
         runtime_version,
+        aspnet_runtime_version,
         references,
     })
 }
@@ -86,12 +104,16 @@ fn stable_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<(PathBuf, String)> {
-    let props = fs::read_to_string(sdk.join("Microsoft.NETCoreSdk.BundledVersions.props")).ok()?;
-    let doc = Document::parse(&props).ok()?;
+fn targeting_pack(
+    doc: &Document<'_>,
+    root: &Path,
+    framework: &str,
+    name: &str,
+) -> Option<(PathBuf, String)> {
+    let pack_name = format!("{name}.Ref");
     let mut matches = doc.descendants().filter(|node| {
         node.has_tag_name("KnownFrameworkReference")
-            && node.attribute("Include") == Some("Microsoft.NETCore.App")
+            && node.attribute("Include") == Some(name)
             && node.attribute("TargetFramework") == Some(framework)
     });
     let entry = matches.next()?;
@@ -102,7 +124,7 @@ fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<(PathBuf, 
         || group.attribute("Condition").is_some()
         || group.parent() != Some(doc.root_element())
         || !doc.root_element().has_tag_name("Project")
-        || entry.attribute("TargetingPackName") != Some("Microsoft.NETCore.App.Ref")
+        || entry.attribute("TargetingPackName") != Some(pack_name.as_str())
     {
         return None;
     }
@@ -112,17 +134,17 @@ fn targeting_pack(sdk: &Path, root: &Path, framework: &str) -> Option<(PathBuf, 
         return None;
     }
     Some((
-        root.join("packs/Microsoft.NETCore.App.Ref").join(version),
+        root.join("packs").join(pack_name).join(version),
         runtime.into(),
     ))
 }
 
-fn reference_files(pack: &Path, framework: &str) -> Option<Vec<PathBuf>> {
+fn reference_files(pack: &Path, framework: &str, framework_name: &str) -> Option<Vec<PathBuf>> {
     let list = fs::read_to_string(pack.join("data/FrameworkList.xml")).ok()?;
     let doc = Document::parse(&list).ok()?;
     let root = doc.root_element();
     if !root.has_tag_name("FileList")
-        || root.attribute("FrameworkName") != Some("Microsoft.NETCore.App")
+        || root.attribute("FrameworkName") != Some(framework_name)
         || root.attribute("TargetFrameworkVersion") != framework.strip_prefix("net")
     {
         return None;
@@ -156,9 +178,12 @@ fn reference_files(pack: &Path, framework: &str) -> Option<Vec<PathBuf>> {
     }
     references.sort_unstable();
     if references.windows(2).any(|pair| pair[0] == pair[1])
-        || !references
-            .iter()
-            .any(|path| path.ends_with("System.Runtime.dll"))
+        || !references.iter().any(|path| {
+            path.ends_with(match framework_name {
+                CORE_NAME => "System.Runtime.dll",
+                _ => "Microsoft.AspNetCore.dll",
+            })
+        })
     {
         return None;
     }
@@ -189,8 +214,10 @@ mod tests {
         .unwrap();
         let pack = root.join("packs/Microsoft.NETCore.App.Ref/8.0.1");
         fs::create_dir_all(root.join("packs/Microsoft.NETCore.App.Ref/8.0.2")).unwrap();
+        let props =
+            fs::read_to_string(sdk.join("Microsoft.NETCoreSdk.BundledVersions.props")).unwrap();
         assert_eq!(
-            targeting_pack(&sdk, root, "net8.0"),
+            targeting_pack(&Document::parse(&props).unwrap(), root, "net8.0", CORE_NAME),
             Some((pack.clone(), "8.0.0".into()))
         );
         let data = pack.join("data");
@@ -213,20 +240,23 @@ mod tests {
             fs::write(path, []).unwrap();
         }
         assert_eq!(
-            reference_files(&pack, "net8.0"),
+            reference_files(&pack, "net8.0", CORE_NAME),
             Some(vec![console, runtime.clone()])
         );
         fs::remove_file(&runtime).unwrap();
-        assert!(reference_files(&pack, "net8.0").is_none());
+        assert!(reference_files(&pack, "net8.0", CORE_NAME).is_none());
     }
 
     #[test]
     fn installed_fast_path_matches_msbuild_when_available() {
         let project = tempfile::tempdir().unwrap();
-        if let Some(references) = installed_references(project.path()) {
-            let msbuild =
-                super::super::probe_framework_msbuild(project.path(), "comparison").unwrap();
-            assert_eq!(references.references, msbuild);
+        for selection in [Framework::Core, Framework::AspNetCore] {
+            if let Some(references) = installed_references(project.path(), selection) {
+                let msbuild =
+                    super::super::probe_framework_msbuild(project.path(), "comparison", selection)
+                        .unwrap();
+                assert_eq!(references.references, msbuild);
+            }
         }
     }
 }

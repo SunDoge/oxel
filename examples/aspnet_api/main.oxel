@@ -1,0 +1,36 @@
+use Microsoft::AspNetCore::Builder::{EndpointRouteBuilderExtensions, WebApplication};
+use Microsoft::AspNetCore::Http::{IResult, Results};
+use System::Collections::Generic::Dictionary;
+use System::Threading::CancellationToken;
+use System::Threading::Tasks::Task;
+use System::Func;
+
+fn sum_response(sum: i32) -> IResult {
+    let result = new Dictionary<string, i32>();
+    result.Add("sum", sum);
+    Results.Ok(result)
+}
+
+fn main(args: string[]) {
+    let builder = WebApplication.CreateBuilder(args);
+    let app = builder.Build();
+
+    let health: Func<IResult> = || { Results.Ok("ok") };
+    EndpointRouteBuilderExtensions.MapGet(app, "/health", health);
+
+    let add: Func<i32, i32, CancellationToken, Task<IResult>> = (async |left, right, aborted| {
+        Task.Delay(1, aborted).await;
+        sum_response(left + right)
+    });
+    EndpointRouteBuilderExtensions.MapGet(app, "/add/{left:int}/{right:int}", add);
+
+    let sum: Func<i32[], IResult> = |values| {
+        let mut total = 0;
+        for value in values {
+            total += value;
+        }
+        sum_response(total)
+    };
+    EndpointRouteBuilderExtensions.MapPost(app, "/sum", sum);
+    app.Run();
+}

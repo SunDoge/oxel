@@ -52,6 +52,17 @@ curl 'http://127.0.0.1:8080/add?left=10&right=20'
 
 The endpoints return `ok` and `30`. The server returns HTTP 400 for missing or invalid operands, 404 for an unknown path, and 405 with an `Allow` header for methods other than GET. Stop it with Ctrl+C. Use `oxel publish --framework examples/http_server.oxel` to build a native executable that takes the same port argument. On Windows, HTTP.sys may require a URL reservation for the selected prefix. [.NET HttpListener](https://learn.microsoft.com/en-us/dotnet/api/system.net.httplistener.getcontext) · [Windows URL reservations](https://learn.microsoft.com/en-us/windows/win32/http/add-urlacl)
 
+The [ASP.NET Core example](examples/aspnet_api) uses Kestrel and Minimal APIs on CoreCLR with the .NET 10 or newer ASP.NET Core shared runtime.
+
+```console
+oxel run --manifest-path examples/aspnet_api/oxel.toml -- --urls http://127.0.0.1:8080
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/add/10/20
+curl -H 'Content-Type: application/json' -d '[10,20]' http://127.0.0.1:8080/sum
+```
+
+The add route binds the two named path parameters and passes the request cancellation token to the asynchronous handler. The sum route binds a JSON array from the request body. Both return `{"sum":30}` for the inputs above. Use non-capturing route lambdas with Minimal API's reflection-based binding. [ASP.NET Core Minimal APIs](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/apis?view=aspnetcore-10.0)
+
 ### Avalonia desktop example
 
 The [Avalonia counter](examples/avalonia_counter/main.oxel) uses an immediate-style view with trailing lambdas for the layout and click actions. A click updates the counter state and reruns the view. The [reconciler](examples/avalonia_counter/immediate.oxel) reuses Avalonia controls by key within each parent, patches changed properties, and inserts, moves, or removes children when the structure changes. Avalonia provides input handling and draws the controls.
@@ -553,6 +564,8 @@ oxel run --framework examples/file_lines.oxel -- README.md
 ```
 
 The option also works with `check`, `compile`, `publish`, and `lsp`. Set `framework = true` under `[package]` in `oxel.toml` to enable it for a project. Set the SDK version with `global.json` in the working directory, or in the manifest directory for manifest builds. Local CLR references and NuGet packages can be used alongside the framework APIs. [File line-counting example](examples/file_lines.oxel)
+
+Set `framework_references = ["Microsoft.AspNetCore.App"]` under `[package]` to use ASP.NET Core APIs. This also enables `Microsoft.NETCore.App`, which can be listed explicitly as an alternative to `framework = true`. Framework-dependent executables require the shared runtimes declared in their `.runtimeconfig.json`. [ASP.NET Core example](examples/aspnet_api/oxel.toml) · [.NET framework references](https://learn.microsoft.com/en-us/dotnet/core/tools/dependencies)
 
 For projects without NuGet dependencies, `check` and LSP can load framework references directly from the SDK's targeting-pack manifests when a single stable SDK is installed. In that setup, `compile`, `run`, and `test` also stage managed outputs directly when there are no local CLR references. They use the installed pack's target framework, minimum runtime version, and application dependency manifest. Projects with `global.json`, multiple SDKs, or custom SDK settings use the SDK path. [SDK selection](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
 

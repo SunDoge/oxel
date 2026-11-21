@@ -255,7 +255,7 @@ impl Wrapper<'_, '_> {
                 modes.push(ParameterPassing::Value);
             }
         }
-        let param_list = metadata.add_parameters(&raw, &modes);
+        let param_list = metadata.add_parameters(&raw, &modes, &[]);
         metadata.methods.push(MethodDefRow {
             rva: 0,
             impl_flags: 0x0080, // PreserveSig
