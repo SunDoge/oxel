@@ -981,7 +981,15 @@ Commits follow Conventional Commits. Run `mise install` for the project tools an
 
 Release-plz runs in Git-only mode. It uses the last `v<version>` tag as the baseline for both Cargo packages and includes compiler changes in the root `CHANGELOG.md`. Each release creates one Git tag and a matching forge release, such as `v0.1.0`. Run `release-plz update` on a clean branch to review version and changelog edits. With the forge and Git credentials configured, run `release-plz release --dry-run` to preview the release. Use `cargo package --workspace --locked` to verify the crate archives separately. [Release-plz Git-only configuration](https://release-plz.dev/docs/config#the-git_only-field)
 
-The GitHub [Release workflow](.github/workflows/release.yml) runs the workspace tests and checks the Linux x86-64 bundle. A manual run builds a downloadable workflow artifact by default. Enable `publish` on the default branch to create the Git-only draft through release-plz, attach the bundle and SHA-256 checksums, and publish the draft.
+Run [Release CLI](.github/workflows/release-cli.yml) from the GitHub Actions tab or with `gh workflow run release-cli.yml`. The default run tests the workspace and uploads the verified Linux x86-64 bundle and its SHA-256 checksum as a workflow artifact. Run with `-f publish=true` on the default branch to publish those verified files through the Git-only release-plz workflow.
+
+To create and test the same bundle locally, use Linux x86-64 with Rust 1.91.0, the .NET 10 runtime, and `jq`.
+
+```sh
+RUSTUP_TOOLCHAIN=1.91.0 bash scripts/package-cli.sh
+```
+
+The archive and checksum are written to `target/preview`. Pass an output directory as the first argument to choose another location. [Running workflows manually](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
 
 ```sh
 cargo test --workspace --locked
