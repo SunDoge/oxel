@@ -37,6 +37,7 @@ struct Run {
     arguments: Vec<OsString>,
     status: Option<i32>,
     reload: Option<(PathBuf, bool)>,
+    debug: bool,
 }
 
 fn main() -> ExitCode {
@@ -53,6 +54,7 @@ fn cli(run: &mut Run) -> ExitCode {
     let Options {
         action,
         format,
+        debug,
         framework,
         locked,
         mut manifest_path,
@@ -66,6 +68,7 @@ fn cli(run: &mut Run) -> ExitCode {
         Err(exit) => return exit,
     };
     run.arguments = arguments;
+    run.debug = debug;
     run.reload = reload_manifest.map(|path| (path, locked));
     if let Action::Bindgen(inputs) = action {
         return bindgen::run(inputs, format);
@@ -351,6 +354,18 @@ fn execute(
                 include_ignored: *include_ignored,
             },
         ),
+        _ if application.debug => {
+            let debug_paths = match paths
+                .iter()
+                .map(std::path::absolute)
+                .collect::<io::Result<Vec<_>>>()
+            {
+                Ok(paths) => paths,
+                Err(error) => return format.error(origin, "E0004", error.to_string()),
+            };
+            let debug_paths: Vec<_> = debug_paths.iter().map(PathBuf::as_path).collect();
+            oxel::compile_project_with_debug(&sources, &debug_paths, name, &references, kind)
+        }
         _ => oxel::compile_project_with_kind(&sources, name, &references, kind),
     };
     let bytes = match compiled {

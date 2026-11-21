@@ -327,6 +327,7 @@ impl<'src> Checker<'_, 'src> {
             internal: true,
             name: "<lambda>".into(),
             span,
+            debug_span: Some(span),
             signature,
             parameter_names,
             captures_environment,

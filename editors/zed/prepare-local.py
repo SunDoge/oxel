@@ -31,6 +31,6 @@ target.mkdir(parents=True, exist_ok=True)
 (target / "extension.toml").write_text(header + local_grammar + "[" + remainder, encoding="utf-8")
 for name in ("Cargo.toml", "Cargo.lock"):
     shutil.copy2(extension / name, target / name)
-for name in ("languages", "src"):
+for name in ("languages", "src", "debug_adapter_schemas"):
     shutil.copytree(extension / name, target / name, dirs_exist_ok=True)
 print(target)

@@ -1,0 +1,7 @@
+[package]
+name = "aspnet-sqlite"
+sources = ["main.oxel", "store.oxel"]
+framework_references = ["Microsoft.AspNetCore.App"]
+
+[nuget]
+"Microsoft.Data.Sqlite" = "10.0.12"

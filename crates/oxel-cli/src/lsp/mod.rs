@@ -19,14 +19,14 @@ use lsp_types::{
     CodeActionParams, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
     CompletionResponse, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidChangeWatchedFilesParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentChanges, DocumentSymbol, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, Hover, HoverContents, HoverParams,
-    InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString, OneOf,
-    OptionalVersionedTextDocumentIdentifier, PositionEncodingKind, PublishDiagnosticsParams,
-    ReferenceParams, RenameOptions, RenameParams, SemanticTokensParams, SemanticTokensRangeParams,
-    ServerCapabilities, ServerInfo, SignatureHelpParams, SymbolInformation, SymbolKind,
-    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextEdit, Uri, WorkspaceEdit,
+    DidOpenTextDocumentParams, DocumentChanges, DocumentFormattingParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, Hover, HoverContents,
+    HoverParams, InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind,
+    NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier, PositionEncodingKind,
+    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SemanticTokensParams,
+    SemanticTokensRangeParams, ServerCapabilities, ServerInfo, SignatureHelpParams,
+    SymbolInformation, SymbolKind, TextDocumentEdit, TextDocumentPositionParams,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Uri, WorkspaceEdit,
     notification::{self, Notification as _},
     request::{self, Request as _},
 };
@@ -104,6 +104,7 @@ pub(super) fn run(
             .into(),
         ),
         document_symbol_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
         code_action_provider,
         references_provider: Some(OneOf::Left(true)),
@@ -354,6 +355,24 @@ impl Session<'_> {
 
     fn request(&self, request: Request) -> ServerResult<Response> {
         let result = match request.method.as_str() {
+            request::Formatting::METHOD => {
+                let params: DocumentFormattingParams = match serde_json::from_value(request.params)
+                {
+                    Ok(params) => params,
+                    Err(error) => {
+                        return Ok(Response::new_err(
+                            request.id,
+                            ErrorCode::InvalidParams as i32,
+                            error.to_string(),
+                        ));
+                    }
+                };
+                let edit = self
+                    .documents
+                    .get(params.text_document.uri.as_str())
+                    .and_then(Document::format);
+                to_value(edit.into_iter().collect::<Vec<_>>())?
+            }
             request::DocumentSymbolRequest::METHOD => {
                 let params: DocumentSymbolParams = match serde_json::from_value(request.params) {
                     Ok(params) => params,

@@ -1,0 +1,29 @@
+use Microsoft::AspNetCore::Builder::{EndpointRouteBuilderExtensions, WebApplication};
+use Microsoft::AspNetCore::Http::{IResult, Results};
+use System::Func;
+use System::Threading::CancellationToken;
+
+fn main(args: string[]) {
+    Store::initialize();
+    let builder = WebApplication.CreateBuilder(args);
+    let app = builder.Build();
+
+    let get: Func<i32, CancellationToken, IResult> = |id, aborted| {
+        aborted.ThrowIfCancellationRequested();
+        match Store::load(id) {
+            Some(value) => Results.Ok(value),
+            None => Results.NotFound(),
+        }
+    };
+    let post: Func<i32, i32, CancellationToken, IResult> = |id, value, aborted| {
+        aborted.ThrowIfCancellationRequested();
+        if id <= 0 {
+            return Results.BadRequest("id must be positive");
+        }
+        Store::save(id, value);
+        Results.Ok(value)
+    };
+    EndpointRouteBuilderExtensions.MapGet(app, "/items/{id:int}", get);
+    EndpointRouteBuilderExtensions.MapPost(app, "/items/{id:int}/{value:int}", post);
+    app.Run();
+}

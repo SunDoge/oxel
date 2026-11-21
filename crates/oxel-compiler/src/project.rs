@@ -120,6 +120,34 @@ pub fn compile_project_with_kind(
     compile(sources, assembly_name, references, kind, None)
 }
 
+/// Emits a managed assembly with embedded Portable PDB sequence points.
+pub fn compile_project_with_debug(
+    sources: &[&str],
+    paths: &[&std::path::Path],
+    assembly_name: &str,
+    references: &References,
+    kind: AssemblyKind,
+) -> Result<Vec<u8>, Vec<SourceDiagnostic>> {
+    let project = Project::new(sources);
+    if sources.len() != paths.len() {
+        return Err(vec![project.map.locate(Diagnostic::new(
+            "E0403",
+            Span::default(),
+            "each debug document requires a source path",
+        ))]);
+    }
+    let program = project.analyze(|module| hir::lower(module, references, kind, None))?;
+    cil::emit_with_debug(
+        &program,
+        sources,
+        assembly_name,
+        references,
+        None,
+        Some(paths),
+    )
+    .map_err(|error| vec![project.map.locate(error)])
+}
+
 /// Compiles source and annotated tests with a synthetic entry point.
 pub fn compile_test_project(
     sources: &[&str],

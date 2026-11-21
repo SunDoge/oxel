@@ -1,5 +1,6 @@
 //! Packages CIL and CLR metadata in a portable, framework-dependent DLL.
 
+mod debug;
 mod interfaces;
 mod native;
 
@@ -74,11 +75,18 @@ pub(super) fn write(
     name: &str,
     references: &References,
     tests: Option<TestOptions<'_>>,
+    debug_paths: Option<&[&std::path::Path]>,
 ) -> Result<Vec<u8>, Diagnostic> {
-    let field_count: usize = program
+    let mut symbols = debug_paths.map(|paths| debug::Symbols::new(sources, paths));
+    let emitted: Vec<_> = program
         .structs
         .iter()
-        .map(|definition| definition.fields.len())
+        .enumerate()
+        .filter(|(id, _)| !program.omitted_structs.contains(id))
+        .collect();
+    let field_count: usize = emitted
+        .iter()
+        .map(|(_, definition)| definition.fields.len())
         .sum();
     // Keep source method IDs stable. Each synthetic method gets a contiguous
     // range for its immediate children, regardless of nesting depth.
@@ -131,21 +139,20 @@ pub(super) fn write(
             .iter()
             .filter(|method| matches!(method.body, MethodBody::Async(..)))
             .count();
-    let interface_methods = program
-        .structs
+    let interface_methods = emitted
         .iter()
-        .map(interfaces::method_count)
+        .map(|(_, definition)| interfaces::method_count(definition))
         .sum::<usize>();
     let native = native::Imports::new(
         &methods,
         &order,
         first_native_wrapper,
-        FIRST_STRUCT_ROW as usize + program.structs.len() + namespace_programs.len(),
+        FIRST_STRUCT_ROW as usize + emitted.len() + namespace_programs.len(),
         interface_methods,
     );
     let method_count = native.method_end();
     if method_count >= 0x00ff_ffff
-        || program.structs.len() + namespace_programs.len() + native.callback_count()
+        || emitted.len() + namespace_programs.len() + native.callback_count()
             > 0x00ff_ffff - (FIRST_STRUCT_ROW as usize - 1)
         || field_count >= 0x00ff_ffff
     {
@@ -153,14 +160,12 @@ pub(super) fn write(
     }
     // A narrow metadata list cannot represent the one-past-end index 65536.
     let narrow_limit = usize::from(u16::MAX);
-    if ((!program.structs.is_empty() || native.callback_count() != 0)
-        && method_count == narrow_limit)
+    if ((!emitted.is_empty() || native.callback_count() != 0) && method_count == narrow_limit)
         || (field_count == narrow_limit
             && (!namespace_programs.is_empty()
-                || program
-                    .structs
+                || emitted
                     .last()
-                    .is_some_and(|definition| definition.fields.is_empty())))
+                    .is_some_and(|(_, definition)| definition.fields.is_empty())))
     {
         return Err(Diagnostic::new(
             "E0402",
@@ -180,11 +185,17 @@ pub(super) fn write(
         tests,
     );
     metadata.method_rows = method_rows;
+    if symbols.is_some() {
+        metadata.add_debuggable_attribute();
+    }
+    for (offset, &(id, _)) in emitted.iter().enumerate() {
+        metadata.struct_offsets[id] = Some(offset as u32);
+    }
     let first_named_method = namespace_programs
         .first()
         .map_or(native.first_callback_method(), |&(_, row)| row);
     if interface_methods == 0 {
-        metadata.add_structs(&program.structs, namespace, first_named_method);
+        metadata.add_structs(&emitted, namespace, first_named_method);
         for (owner, first_method) in namespace_programs {
             metadata.add_namespace_program(namespace, owner, first_method);
         }
@@ -194,7 +205,7 @@ pub(super) fn write(
             metadata.add_namespace_program(namespace, owner, first_method);
         }
         metadata.add_structs(
-            &program.structs,
+            &emitted,
             namespace,
             native.first_callback_method() - interface_methods as u32,
         );
@@ -233,8 +244,17 @@ pub(super) fn write(
                     function.has_exception_regions,
                 );
                 body.parameter_offset = u16::from(function.captures_environment);
+                body.debug_points = symbols
+                    .as_ref()
+                    .and(function.debug_span)
+                    .map(|_| Vec::new());
                 body.emit(block);
-                body.write(&mut text, span)?;
+                let locals = body.write(&mut text, span)?;
+                if let (Some(symbols), Some(points), Some(debug_span)) =
+                    (&mut symbols, &body.debug_points, function.debug_span)
+                {
+                    symbols.record(method_index, debug_span, locals, points, body.code.len());
+                }
                 (TEXT_RVA + CLI_HEADER_SIZE + offset, 0, 0, &[][..])
             }
             MethodBody::Async(block, plan) => {
@@ -249,13 +269,28 @@ pub(super) fn write(
                     true,
                 );
                 body.parameter_offset = u16::from(function.captures_environment);
+                body.debug_points = symbols
+                    .as_ref()
+                    .and(function.debug_span)
+                    .map(|_| Vec::new());
                 let frame_size = body
                     .emit_async_step(block, **plan, &function.signature.parameters)
                     .map_err(|mut error| {
                         error.map_spans(rebase);
                         error
                     })?;
-                body.write(&mut text, span)?;
+                let locals = body.write(&mut text, span)?;
+                if let (Some(symbols), Some(points), Some(debug_span)) =
+                    (&mut symbols, &body.debug_points, function.debug_span)
+                {
+                    symbols.record(
+                        source_method_count + async_steps.len(),
+                        debug_span,
+                        locals,
+                        points,
+                        body.code.len(),
+                    );
+                }
                 async_steps.push((step_rva, function));
                 let type_arguments: Vec<_> = (0..function.signature.type_arity)
                     .map(Type::MethodParameter)
@@ -361,6 +396,22 @@ pub(super) fn write(
     let entry = program
         .entry
         .map_or(0, |method| metadata.source_method_token(method));
+    let debug = symbols
+        .map(|symbols| symbols.finish(name, entry, metadata.methods.len(), metadata.locals.len()))
+        .transpose()?;
+    if let Some(debug) = &debug {
+        let mut hash = blake3::Hasher::new();
+        hash.update(
+            &metadata
+                .guids
+                .get(metadata.module.mvid)
+                .expect("module GUID"),
+        );
+        hash.update(&debug.id);
+        let mut mvid = [0; 16];
+        hash.finalize_xof().fill(&mut mvid);
+        metadata.module.mvid = metadata.guids.add(&mvid);
+    }
     let metadata = metadata.finish()?;
     let metadata_length = image_offset(metadata.len())?;
     let mut section = Writer::new();
@@ -374,7 +425,7 @@ pub(super) fn write(
     section.write_bytes(&[0; 48]); // remaining CLI directories
     section.write_bytes(text.as_slice());
     section.write_bytes(&metadata);
-    pe_image(section.as_slice(), namespace.is_some())
+    pe_image(section, namespace.is_some(), debug)
 }
 
 fn image_too_large() -> Diagnostic {
@@ -392,8 +443,14 @@ fn image_offset(size: usize) -> Result<u32, Diagnostic> {
     Ok(size as u32)
 }
 
-fn pe_image(data: &[u8], library: bool) -> Result<Vec<u8>, Diagnostic> {
-    let size = image_offset(data.len())?;
+fn pe_image(
+    mut data: Writer,
+    library: bool,
+    debug: Option<debug::Directory>,
+) -> Result<Vec<u8>, Diagnostic> {
+    let size = image_offset(debug.as_ref().map_or(data.len(), |debug| {
+        data.len().next_multiple_of(4) + debug.size()
+    }))?;
     let mut bytes = Vec::new();
     // PE32 with the CLI IL-only flag is the AnyCPU format.
     let mut pe = PeWriter::new(false, SECTION_ALIGNMENT, FILE_ALIGNMENT, &mut bytes);
@@ -413,6 +470,14 @@ fn pe_image(data: &[u8], library: bool) -> Result<Vec<u8>, Diagnostic> {
         TEXT_RVA,
         CLI_HEADER_SIZE,
     );
+    if let Some(debug) = debug {
+        pe.set_data_directory(
+            pe::IMAGE_DIRECTORY_ENTRY_DEBUG,
+            TEXT_RVA + data.len().next_multiple_of(4) as u32,
+            debug::Directory::ENTRIES_SIZE,
+        );
+        debug.append(&mut data, TEXT_RVA, section.file_offset);
+    }
     pe.write_dos_header_and_stub().map_err(|err| {
         Diagnostic::new(
             "E0403",
@@ -444,7 +509,7 @@ fn pe_image(data: &[u8], library: bool) -> Result<Vec<u8>, Diagnostic> {
         size_of_heap_commit: 0x1000,
     });
     pe.write_section_headers();
-    pe.write_section(section.file_offset, data);
+    pe.write_section(section.file_offset, data.as_slice());
     Ok(bytes)
 }
 
@@ -473,6 +538,7 @@ pub(super) struct Tables<'refs> {
     instances: &'refs [TypeInstance],
     source_types: &'refs [Struct<'refs>],
     struct_base: u32,
+    struct_offsets: Vec<Option<u32>>,
     interface_members: HashMap<InterfaceMember, u32>,
     interface_impls: Vec<InterfaceImplRow>,
     method_impls: Vec<MethodImplRow>,
@@ -521,7 +587,7 @@ impl<'refs> Tables<'refs> {
         let mut strings = StringsHeap::new();
         let mut blobs = BlobHeap::new();
         let mut guids = GuidHeap::new();
-        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 51 module id");
+        let mut hash = blake3::Hasher::new_derive_key("oxel assembly format 52 module id");
         hash.update(name.as_bytes());
         hash.update(b"\0");
         if namespace.is_some() {
@@ -634,6 +700,7 @@ impl<'refs> Tables<'refs> {
             instances,
             source_types,
             struct_base: FIRST_STRUCT_ROW,
+            struct_offsets: vec![None; source_types.len()],
             interface_members: HashMap::new(),
             interface_impls: Vec::new(),
             method_impls: Vec::new(),
@@ -650,7 +717,7 @@ impl<'refs> Tables<'refs> {
             error_writer_members: None,
             string_array_concat: None,
             nullable_ctors: [None; 2],
-            first_fields: Vec::new(),
+            first_fields: vec![0; source_types.len()],
             members: Vec::new(),
             externals,
             assembly_indices,
@@ -691,19 +758,19 @@ impl<'refs> Tables<'refs> {
     }
 
     fn struct_row(&self, id: usize) -> u32 {
-        self.struct_base + id as u32
+        self.struct_base + self.struct_offsets[id].expect("emitted source type")
     }
 
     fn add_structs(
         &mut self,
-        structs: &[Struct<'_>],
+        structs: &[(usize, &Struct<'_>)],
         namespace: Option<&str>,
         mut first_method: u32,
     ) {
         let source_namespace = namespace.map_or(0, |name| self.strings.add(name));
-        for (id, definition) in structs.iter().enumerate() {
+        for &(id, definition) in structs {
             let first_field = self.fields.len() as u32 + 1;
-            self.first_fields.push(first_field);
+            self.first_fields[id] = first_field;
             let arity = definition.type_parameters.len();
             let name = definition
                 .name
@@ -910,6 +977,23 @@ impl<'refs> Tables<'refs> {
             ty if ty.reference() => flags.push(if ty == ty.non_nullable() { 1 } else { 2 }),
             _ => {} // Non-generic value types occupy no slot.
         }
+    }
+
+    fn add_debuggable_attribute(&mut self) {
+        let scope = self.type_refs[0].resolution_scope;
+        self.type_refs.push(TypeRefRow {
+            resolution_scope: scope,
+            type_name: self.strings.add("DebuggableAttribute"),
+            type_namespace: self.strings.add("System.Diagnostics"),
+        });
+        let signature =
+            self.method_signature(&[Type::Bool; 2], Type::Void, Invocation::Constructor, 0);
+        let constructor = self.push_member(self.type_refs.len() as u32, ".ctor", signature);
+        self.custom_attributes.push(CustomAttributeRow {
+            parent: index(TableId::Assembly, 1),
+            attr_type: index(TableId::MemberRef, constructor),
+            value: self.blobs.add(&[1, 0, 1, 1, 0, 0]),
+        });
     }
 
     fn add_nullable_attribute(&mut self, parent: CodedIndex, flags: &[u8]) {
@@ -1650,34 +1734,7 @@ impl<'refs> Tables<'refs> {
             ("#GUID", self.guids.data()),
             ("#Blob", self.blobs.data()),
         ];
-        let mut root = MetadataRoot {
-            major_version: 1,
-            minor_version: 1,
-            reserved: 0,
-            version: "v4.0.30319".into(),
-            flags: 0,
-            streams: streams
-                .iter()
-                .map(|(name, _)| StreamHeader {
-                    name: (*name).into(),
-                    size: 0,
-                    offset: 0,
-                })
-                .collect(),
-        };
-        let mut offset = root.header_size();
-        for (header, (_, data)) in root.streams.iter_mut().zip(streams) {
-            header.offset = image_offset(offset)?;
-            header.size = image_offset(data.len())?;
-            offset = (offset + data.len()).next_multiple_of(4);
-        }
-        let mut output = Writer::with_capacity(image_offset(offset)? as usize);
-        root.write_to(&mut output);
-        for (_, data) in streams {
-            output.write_bytes(data);
-            output.align(4);
-        }
-        Ok(output.into_inner())
+        metadata_root("v4.0.30319", streams)
     }
 
     fn generic_constraint_count(&self) -> usize {
@@ -1825,4 +1882,38 @@ fn index(table: TableId, row: u32) -> CodedIndex {
         table: Some(table),
         row,
     }
+}
+
+fn metadata_root<const N: usize>(
+    version: &str,
+    streams: [(&str, &[u8]); N],
+) -> Result<Vec<u8>, Diagnostic> {
+    let mut root = MetadataRoot {
+        major_version: 1,
+        minor_version: 1,
+        reserved: 0,
+        version: version.into(),
+        flags: 0,
+        streams: streams
+            .iter()
+            .map(|(name, _)| StreamHeader {
+                name: (*name).into(),
+                size: 0,
+                offset: 0,
+            })
+            .collect(),
+    };
+    let mut offset = root.header_size();
+    for (header, (_, data)) in root.streams.iter_mut().zip(streams) {
+        header.offset = image_offset(offset)?;
+        header.size = image_offset(data.len())?;
+        offset = (offset + data.len()).next_multiple_of(4);
+    }
+    let mut output = Writer::with_capacity(image_offset(offset)? as usize);
+    root.write_to(&mut output);
+    for (_, data) in streams {
+        output.write_bytes(data);
+        output.align(4);
+    }
+    Ok(output.into_inner())
 }

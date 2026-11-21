@@ -1,0 +1,45 @@
+namespace Store;
+
+use Microsoft::Data::Sqlite::{SqliteConnection, SqliteConnectionStringBuilder};
+use System::Environment;
+
+fn connection() -> SqliteConnection {
+    let path = Environment.GetEnvironmentVariable("OXEL_SQLITE_PATH") ?? "items.db";
+    let settings = new SqliteConnectionStringBuilder();
+    settings.DataSource = path;
+    new SqliteConnection(settings.ConnectionString)
+}
+
+fn initialize() {
+    using db = connection() {
+        db.Open();
+        using command = db.CreateCommand() {
+            command.CommandText = "CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)";
+            command.ExecuteNonQuery();
+        }
+    }
+}
+
+fn save(id: i32, value: i32) {
+    using db = connection() {
+        db.Open();
+        using command = db.CreateCommand() {
+            command.CommandText = "INSERT INTO items (id, value) VALUES ($id, $value) ON CONFLICT(id) DO UPDATE SET value = excluded.value";
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$value", value);
+            command.ExecuteNonQuery();
+        }
+    }
+}
+
+fn load(id: i32) -> Option<i64> {
+    using db = connection() {
+        db.Open();
+        using command = db.CreateCommand() {
+            command.CommandText = "SELECT value FROM items WHERE id = $id";
+            command.Parameters.AddWithValue("$id", id);
+            let value = command.ExecuteScalar()?;
+            value as? i64
+        }
+    }
+}

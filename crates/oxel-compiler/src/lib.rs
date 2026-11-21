@@ -16,8 +16,9 @@ pub use clr::{References, valid_assembly_name};
 pub use hir::{Type, clr_function_signatures};
 pub use project::{
     AssemblyKind, SourceDiagnostic, TestOptions, UnitTest, check_project, check_project_with_kind,
-    check_test_project, compile_project, compile_project_with_kind, compile_test_project,
-    compile_test_project_filtered, compile_test_project_with_options, discover_test_project,
+    check_test_project, compile_project, compile_project_with_debug, compile_project_with_kind,
+    compile_test_project, compile_test_project_filtered, compile_test_project_with_options,
+    discover_test_project,
 };
 pub use syntax::{
     CallSite, call_site, declared_function_signature, format_source, valid_identifier,

@@ -30,7 +30,7 @@ With `--framework`, write `async fn fetch() -> string` for a function that retur
 
 Generic async functions support type inference and constraints. For example, `async fn after<T>(gate: Task, value: T) -> T` returns a CLR `Task<T>`. A struct field initializer can await a task. [Runnable generic async example](examples/generic_async.oxel)
 
-Use `.await` inside `try` and `catch` blocks. An exception raised when an await resumes can reach a surrounding catch, and the catch can await another task before continuing. `using` and loops over disposable CLR enumerators inside async bodies require additional lowering. Span parameters and locals also require additional lifetime analysis. A managed address cannot remain live across an await.
+Use `.await` inside `try` and `catch` blocks. An exception raised when an await resumes can reach a surrounding catch, and the catch can await another task before continuing. Scoped `using` and loops over disposable CLR enumerators preserve their resources across suspension and dispose them when control exits the scope. Span parameters and locals in async bodies require additional lifetime analysis. A managed address cannot remain live across an await.
 
 Write `async |value| { ... }` or `async { ... }` to create an async lambda with a known CLR delegate type. Both forms also work as trailing lambdas. A delegate returning `Task<T>` or `ValueTask<T>` expects a body that yields `T`. A delegate returning `Task`, `ValueTask`, or `void` expects a void body. For void delegates such as event handlers, .NET's async-void builder handles uncaught exceptions. [Runnable async catch and lambda example](examples/async_catch.oxel)
 
@@ -62,6 +62,18 @@ curl -H 'Content-Type: application/json' -d '[10,20]' http://127.0.0.1:8080/sum
 ```
 
 The add route binds the two named path parameters and passes the request cancellation token to the asynchronous handler. The sum route binds a JSON array from the request body. Both return `{"sum":30}` for the inputs above. Use non-capturing route lambdas with Minimal API's reflection-based binding. [ASP.NET Core Minimal APIs](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/apis?view=aspnetcore-10.0)
+
+### SQLite API example
+
+The [SQLite service](examples/aspnet_sqlite) uses a NuGet dependency, parameterized commands, and scoped disposal for its database connections. Kestrel binds the request cancellation token, which the handlers check before starting database work. The example uses SQLite's synchronous APIs. [Microsoft.Data.Sqlite async behavior](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async)
+
+```sh
+OXEL_SQLITE_PATH=items.db oxel run --locked --manifest-path examples/aspnet_sqlite/oxel.toml -- --urls http://127.0.0.1:8080
+curl -X POST http://127.0.0.1:8080/items/1/30
+curl http://127.0.0.1:8080/items/1
+```
+
+Both requests return `30`. Restart the service and repeat the GET request to read the same value from disk. Run the integration test with `cargo test --locked --test aspnet aspnet_sqlite -- --ignored`.
 
 ### Avalonia desktop example
 
@@ -119,7 +131,7 @@ oxel fmt src/main.oxel src/routes.oxel
 oxel fmt --check --manifest-path examples/project/oxel.toml
 ```
 
-`--check` is read-only and exits with a nonzero status if any file needs formatting. Formatting uses four-space indentation and preserves comments, literal contents, and intentional line breaks in lists. It uses the compiler's syntax parser and works without .NET or a NuGet restore. In-place writes start only after every input parses successfully.
+`--check` is read-only and exits with a nonzero status if any file needs formatting. Formatting uses four-space indentation and preserves comments, literal contents, and intentional line breaks in lists. It uses the compiler's syntax parser and works without .NET or a NuGet restore. In-place writes start only after every input parses successfully. Zed uses the same formatter via `oxel lsp`. Set `"format_on_save": "on"` under the `Oxel` language settings to format on save.
 
 ## Multi-file modules
 
@@ -252,7 +264,7 @@ fn main() {
 }
 ```
 
-- A program has one zero-argument, void `main`. Functions can call each other in any source order. Parameters require annotations. The omitted result type is `void`.
+- An executable has one `main`. See the [entry point examples](#quick-start) for its supported parameters and result types. Functions can call each other in any source order. Parameters require annotations. The omitted result type is `void`.
 - `bool`, `char`, `string`, `object` and `void` map to `System.Boolean`, `System.Char`, `System.String`, `System.Object` and `System.Void`. Signed integers `i8`, `i16`, `i32` and `i64` map to `System.SByte`, `System.Int16`, `System.Int32` and `System.Int64`. Unsigned integers `u8`, `u16`, `u32` and `u64` map to `System.Byte`, `System.UInt16`, `System.UInt32` and `System.UInt64`. `f32` and `f64` map to `System.Single` and `System.Double`. Fully qualified CLR names are valid annotations. `void` is a result type. [Unsigned integer example](examples/unsigned_integers.oxel)
 - Integer literals default to `i32` and take another integer type from a typed context when they fit. Use decimal digits or the prefixes `0x`, `0o`, and `0b` for hexadecimal, octal, and binary. Uppercase prefixes are also accepted. Insert `_` between digits for readability, as in `0b1111_0000`, `1_000`, or `12.5_0e-0_1`. Integer arithmetic wraps at the declared width. Integer division and remainder truncate toward zero, and division by zero raises an error. The CLR also checks signed division overflow at the evaluation width. Small integers evaluate on the `i32` stack and are narrowed after each arithmetic operation. Unary `-` requires a signed integer or floating-point operand.
 - Decimal floating-point literals such as `3.0`, `5e-2` and `1.25E+3` default to `f64`. A typed context can give a literal type `f32`, which parses and computes at single precision. Literals that overflow their target width are rejected. Floating-point division by zero follows IEEE 754. NaN is unequal to itself, and all ordering comparisons with NaN are false. Numeric operations use equal-width operands from the same family. [CLR floating-point comparisons](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.emit.opcodes.clt_un?view=net-6.0)
@@ -453,15 +465,13 @@ The compiler emits tagged CLR value types, including generic CLR value types for
 ## Error propagation
 
 ```rust
-enum Result<T, E> { Ok(T), Err(E) }
-
 fn next(input: Result<i32, string>) -> Result<i32, string> {
     let value = input?;
     Result.Ok(value + 1)
 }
 ```
 
-The postfix `?` evaluates its operand once. It yields the `Ok` payload or immediately returns an `Err` from the enclosing function. Use it with the module's `Result<T, E>` enum, whose variants must be `Ok(T)` and `Err(E)`. Variant order and type parameter names are unrestricted.
+The postfix `?` evaluates its operand once. It yields the `Ok` payload or immediately returns an `Err` from the enclosing function. The standard `Result<T, E>` supplies `Result.Ok(value)` and `Result.Err(error)`. A module may declare its own compatible `Result` enum with `Ok(T)` and `Err(E)` in either order. The compiler emits the standard definition into each assembly that uses it, with each assembly retaining its own CLR type identity.
 
 The two `Result` types may have different success types. The input error must be assignable to the function's error type, including ordinary CLR reference conversions and boxing to `object`. The operand determines its own generic arguments, so use a typed input or supply explicit arguments to an otherwise ambiguous call. [Runnable example](examples/errors.oxel)
 
@@ -887,6 +897,24 @@ Open the directory containing `oxel.toml` to use its sources, test sources, and 
     }
   }
 }
+```
+
+### Source debugging
+
+Use `oxel run --debug` to include Oxel filenames and line numbers in CLR exception traces. Use `oxel compile --debug` for a managed DLL with embedded Portable PDB symbols. A debug build records the absolute paths of its inputs and disables JIT optimizations. It maps emitted IL to source lines and supports line breakpoints. Oxel local-variable names and scopes require additional debug metadata. [Portable PDB format](https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md)
+
+With the Oxel Zed extension installed and `netcoredbg` on `PATH`, set a gutter breakpoint and run `debugger: start`. Add a launch configuration to `.zed/debug.json` and use the DLL path printed by `oxel compile --debug`. [Zed debugger](https://zed.dev/docs/debugger) · [NetCoreDbg releases](https://github.com/Samsung/netcoredbg/releases)
+
+```json
+[
+  {
+    "label": "Debug Oxel",
+    "adapter": "oxel",
+    "request": "launch",
+    "program": "/absolute/path/to/target/oxel/hello.dll",
+    "cwd": "/absolute/path/to/project"
+  }
+]
 ```
 
 To regenerate and test the editor grammar, run `npx --yes tree-sitter-cli@0.25.10 generate` and `npx --yes tree-sitter-cli@0.25.10 test` from `editors/tree-sitter-oxel`.

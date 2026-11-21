@@ -1770,3 +1770,114 @@ fn using_checks_disposable_types_and_limits_the_binding_scope() {
         "E0345"
     );
 }
+
+#[test]
+fn async_using_keeps_resources_alive_and_disposes_on_each_exit() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = folder.path();
+    let source = r#"
+        use System::IO::StringReader;
+        use System::Threading::Tasks::{Task, TaskCompletionSource};
+
+        struct FailingResource {}
+        impl System.IDisposable for FailingResource {
+            fn Dispose(self: FailingResource) {
+                throw new System.FormatException()
+            }
+        }
+
+        fn closed(reader: StringReader) -> bool {
+            try { reader.Peek(); false }
+            catch (_: System.ObjectDisposedException) { true }
+        }
+
+        async fn read(gate: Task, outer: StringReader, inner: StringReader) -> i32 {
+            using a = outer {
+                using b = inner {
+                    return a.Read() + { gate.await; b.Read() };
+                }
+            }
+        }
+
+        async fn dispose_fails(gate: Task) -> i32 {
+            try {
+                using resource = (FailingResource {}) {
+                    gate.await;
+                    return 1;
+                }
+            } catch (_: System.FormatException) {
+                30
+            }
+        }
+
+        async fn propagate(gate: Task, input: StringReader) -> Option<i32> {
+            let missing: Option<i32> = Option.None;
+            using reader = input {
+                gate.await;
+                Option.Some(missing?)
+            }
+        }
+
+        async fn break_from_using(gate: Task, input: StringReader) {
+            while true {
+                using reader = input {
+                    gate.await;
+                    break;
+                }
+            }
+        }
+
+        async fn enumerate(gate: Task) -> i32 {
+            let values = new System.Collections.Generic.List<i32>();
+            values.Add(12);
+            values.Add(18);
+            let mut sum = 0;
+            for value in values {
+                gate.await;
+                sum += value;
+            }
+            sum
+        }
+
+        async fn main() {
+            let gate = new TaskCompletionSource<i32>();
+            let outer = new StringReader("A");
+            let inner = new StringReader("B");
+            let missing = new StringReader("");
+            let breaking = new StringReader("");
+            let reading = read(gate.Task, outer, inner);
+            let failing = dispose_fails(gate.Task);
+            let propagating = propagate(gate.Task, missing);
+            let loop_exit = break_from_using(gate.Task, breaking);
+            let enumerating = enumerate(gate.Task);
+            assert(!reading.IsCompleted);
+            assert(!closed(outer) && !closed(inner) && !closed(missing) && !closed(breaking));
+            gate.SetResult(0);
+            assert(reading.await == 131);
+            assert(failing.await == 30);
+            assert((propagating.await ?? 42) == 42);
+            loop_exit.await;
+            assert(enumerating.await == 30);
+            assert(closed(outer) && closed(inner) && closed(missing) && closed(breaking));
+
+            let canceled_gate = new TaskCompletionSource<i32>();
+            let cancel_outer = new StringReader("A");
+            let cancel_inner = new StringReader("B");
+            let cancel_read = read(canceled_gate.Task, cancel_outer, cancel_inner);
+            canceled_gate.SetCanceled();
+            try {
+                cancel_read.await;
+                assert(false);
+            } catch (_: System.OperationCanceledException) {
+                assert(cancel_read.IsCanceled);
+                assert(closed(cancel_outer) && closed(cancel_inner));
+            }
+            System.Console.WriteLine("disposed");
+        }
+    "#;
+    fs::write(project.join("main.oxel"), source).unwrap();
+    assert_eq!(
+        success(oxel(project, &["run", "--framework", "main.oxel"])),
+        "disposed\n"
+    );
+}

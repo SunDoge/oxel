@@ -410,24 +410,24 @@ mod tests {
     }
 
     #[test]
-    fn incremental_emission_replays_builtins_and_drops_unused_option_types() {
+    fn incremental_emission_replays_builtins_and_drops_unused_carriers() {
         let references = References::default();
         let mut compiler = ProjectCompiler::new(AssemblyKind::Library, &references);
         let mut sources: [Arc<str>; 2] = [
             "const VALUE = 4; fn edited() -> i32 { VALUE }".into(),
-            "fn uses_option() -> i32 { let value: Option<i32[]> = Option.Some([42]); (value ?? [0])[0] }".into(),
+            "fn uses_option() -> i32 { let value: Option<i32[]> = Option.Some([42]); (value ?? [0])[0] } fn uses_result() -> i32 { let value: Result<i32, string> = Result.Ok(42); match value { Ok(n) => n, Err(_) => 0 } }".into(),
         ];
         same_image(&mut compiler, &sources);
         sources[0] = "const VALUE = 4; fn edited() -> i32 { VALUE + 1 }".into();
         same_image(&mut compiler, &sources);
         assert_eq!(compiler.checked_functions(), 1);
 
-        sources[1] = "fn uses_option() -> i32 { 42 }".into();
+        sources[1] = "fn uses_option() -> i32 { 42 } fn uses_result() -> i32 { let value: Result<i32, string> = Result.Ok(42); match value { Ok(n) => n, Err(_) => 0 } }".into();
         same_image(&mut compiler, &sources);
         assert_eq!(compiler.checked_functions(), 1);
 
         sources[0] = "const VALUE = 8; fn edited() -> i32 { VALUE + 1 }".into();
         same_image(&mut compiler, &sources);
-        assert_eq!(compiler.checked_functions(), 2);
+        assert_eq!(compiler.checked_functions(), 3);
     }
 }

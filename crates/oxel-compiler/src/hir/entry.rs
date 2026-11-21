@@ -101,6 +101,7 @@ impl Entry {
             internal: true,
             name: "<oxel_main>".into(),
             span,
+            debug_span: None,
             signature,
             parameter_names: Vec::new(),
             captures_environment: false,

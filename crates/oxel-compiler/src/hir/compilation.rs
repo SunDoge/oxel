@@ -6,6 +6,7 @@ use super::*;
 
 pub(super) const OPTION: u8 = 1;
 pub(super) const FIELD_INFO: u8 = 2;
+pub(super) const RESULT: u8 = 4;
 
 thread_local! {
     // Each dirty body is checked on one worker, including its nested lambdas.
@@ -115,6 +116,9 @@ impl CompilationCache {
         }
         if builtins & FIELD_INFO != 0 {
             scope.types.field_info_used.store(true, Ordering::Relaxed);
+        }
+        if builtins & RESULT != 0 {
+            scope.types.result_used.store(true, Ordering::Relaxed);
         }
         Ok(functions)
     }

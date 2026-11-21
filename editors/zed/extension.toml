@@ -15,3 +15,5 @@ path = "editors/tree-sitter-oxel"
 languages = ["Oxel"]
 language_ids = { Oxel = "oxel" }
 code_action_kinds = ["quickfix"]
+
+[debug_adapters.oxel]

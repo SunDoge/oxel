@@ -29,12 +29,6 @@ struct Variant<'src> {
 pub(super) fn builtin_option() -> Struct<'static> {
     let span = Span::default();
     Struct {
-        namespace: None,
-        internal: false,
-        name: "Option",
-        builtin: true,
-        interface: None,
-        implementations: Vec::new(),
         fields: vec![
             Field {
                 name: Cow::Borrowed("$tag"),
@@ -48,7 +42,6 @@ pub(super) fn builtin_option() -> Struct<'static> {
             },
         ],
         type_parameters: vec!["T"],
-        bounds: Vec::new(),
         union: Some(Union {
             variants: vec![
                 Variant {
@@ -65,7 +58,59 @@ pub(super) fn builtin_option() -> Struct<'static> {
             ids: HashMap::from([("None", 0), ("Some", 1)]),
             zero_variant: Some(0),
         }),
-        span,
+        ..builtin_carrier("Option")
+    }
+}
+
+pub(super) fn builtin_result() -> Struct<'static> {
+    let span = Span::default();
+    Struct {
+        fields: [
+            ("$tag", Type::I32),
+            ("Ok$0", Type::TypeParameter(0)),
+            ("Err$0", Type::TypeParameter(1)),
+        ]
+        .into_iter()
+        .map(|(name, ty)| Field {
+            name: Cow::Borrowed(name),
+            ty,
+            span,
+        })
+        .collect(),
+        type_parameters: vec!["T", "E"],
+        union: Some(Union {
+            variants: vec![
+                Variant {
+                    name: "Ok",
+                    span,
+                    fields: 1..2,
+                },
+                Variant {
+                    name: "Err",
+                    span,
+                    fields: 2..3,
+                },
+            ],
+            ids: HashMap::from([("Ok", 0), ("Err", 1)]),
+            zero_variant: None,
+        }),
+        ..builtin_carrier("Result")
+    }
+}
+
+fn builtin_carrier(name: &'static str) -> Struct<'static> {
+    Struct {
+        namespace: None,
+        internal: false,
+        name,
+        builtin: true,
+        interface: None,
+        implementations: Vec::new(),
+        fields: Vec::new(),
+        type_parameters: Vec::new(),
+        bounds: Vec::new(),
+        union: None,
+        span: Span::default(),
         field_ids: HashMap::new(),
     }
 }

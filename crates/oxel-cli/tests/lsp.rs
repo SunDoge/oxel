@@ -113,6 +113,7 @@ impl Client {
         assert_eq!(result["serverInfo"]["name"], "oxel");
         assert_eq!(result["capabilities"]["positionEncoding"], "utf-16");
         assert_eq!(result["capabilities"]["textDocumentSync"]["change"], 2);
+        assert_eq!(result["capabilities"]["documentFormattingProvider"], true);
         assert_eq!(
             result["capabilities"]["signatureHelpProvider"]["triggerCharacters"],
             json!(["(", ","])
@@ -1673,5 +1674,42 @@ fn library_lsp_treats_main_as_an_ordinary_function() {
         }),
     );
     assert_eq!(rename["changes"][uri.as_str()][0]["newText"], "enabled");
+    client.finish();
+}
+
+#[test]
+fn formats_unsaved_documents_and_uses_utf16_ranges() {
+    let mut client = Client::start(false, None);
+    let uri = "file:///format.oxel";
+    let params = json!({
+        "textDocument": {"uri": uri},
+        "options": {"tabSize": 2, "insertSpaces": true}
+    });
+    client.open(uri, "fn main(){System.Console.WriteLine(\"😀\");}");
+    client.diagnostics();
+    let edits = client.request("textDocument/formatting", params.clone());
+    assert_eq!(
+        edits,
+        json!([{
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 0, "character": 42}
+            },
+            "newText": "fn main() {\n    System.Console.WriteLine(\"😀\");\n}\n"
+        }])
+    );
+    let broken = "file:///broken-format.oxel";
+    client.open(broken, "fn broken(");
+    client.diagnostics();
+    assert_eq!(
+        client.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": {"uri": broken},
+                "options": {"tabSize": 4, "insertSpaces": true}
+            })
+        ),
+        json!([])
+    );
     client.finish();
 }

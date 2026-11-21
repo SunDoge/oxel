@@ -232,12 +232,12 @@ impl Structs<'_, '_> {
             );
             matches!((a, b), (Ok(a), Ok(b)) if self.same_runtime_type(a, b))
         };
-        same_type(a_signature.result, b_signature.result)
-            && a_signature
-                .parameters
-                .iter()
-                .zip(&b_signature.parameters)
-                .all(|(&left, &right)| same_type(left, right))
+        // A derived method can hide a base method with a different return type.
+        a_signature
+            .parameters
+            .iter()
+            .zip(&b_signature.parameters)
+            .all(|(&left, &right)| same_type(left, right))
     }
 
     fn same_runtime_type(&self, a: Type, b: Type) -> bool {

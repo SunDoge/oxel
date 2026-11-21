@@ -202,7 +202,7 @@ impl Wrapper<'_> {
             body.max_stack = body.max_stack.max(1);
         }
         body.op(0x2a);
-        body.write(output, span)
+        body.write(output, span).map(|_| ())
     }
 
     fn add_raw_import(&self, metadata: &mut Tables<'_>) {

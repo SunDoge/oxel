@@ -4,7 +4,7 @@ use super::{BASE_EXCEPTION, Body, ExceptionClause, StackSlot};
 use crate::{
     Diagnostic,
     hir::{
-        Block, ExceptionRegion, Expr, Member, Type,
+        Block, ExceptionRegion, Expr, Member, Type, UsingRegion,
         asynchronous::{Completion, Plan, Suspension},
     },
 };
@@ -23,6 +23,9 @@ pub(super) struct State {
     scratch_size: usize,
     resumes: Vec<usize>,
     failure: Option<Diagnostic>,
+    completion_jumps: Vec<usize>,
+    suspend_flag: Option<u16>,
+    cleanup_depth: usize,
 }
 
 impl State {
@@ -61,12 +64,32 @@ impl Body<'_, '_> {
             scratch_size: 0,
             resumes: Vec::new(),
             failure: None,
+            completion_jumps: Vec::new(),
+            suspend_flag: None,
+            cleanup_depth: 0,
         });
         let dispatch = self.branch(0x38); // br
         let start = self.code.len();
         self.block(block, 0);
         if block.ty != Type::Never {
             self.complete_async(block.ty);
+        }
+
+        let completion_jumps = std::mem::take(
+            &mut self
+                .async_state
+                .as_mut()
+                .expect("active async method")
+                .completion_jumps,
+        );
+        if !completion_jumps.is_empty() {
+            for jump in completion_jumps {
+                self.patch(jump);
+            }
+            if let Some(slot) = self.return_slot {
+                self.indexed(0x11, 0x0c, slot);
+            }
+            self.complete_async(plan.output);
         }
 
         self.patch(dispatch);
@@ -290,6 +313,12 @@ impl Body<'_, '_> {
         self.indexed(0x12, 0x0d, awaiter);
         self.load_async_slot(CONTINUATION, StackSlot::Value(action));
         self.async_call(await_.subscribe, false);
+        let state = self.async_state.as_ref().expect("active suspension");
+        if state.cleanup_depth != 0 {
+            let flag = state.suspend_flag.expect("active cleanup");
+            self.op(0x17); // ldc.i4.1
+            self.indexed(0x13, 0x0e, flag); // stloc
+        }
         let leave = self.branch(0xdd);
         self.return_jumps.push(leave);
 
@@ -311,38 +340,8 @@ impl Body<'_, '_> {
 
     pub(super) fn async_try_catch(&mut self, region: &ExceptionRegion, ty: Type, base: usize) {
         let pending = self.begin_region(base);
-        let entry = self.code.len();
-        self.op(0x00); // resume dispatch reaches this point outside the protected body
-        let start = self.code.len();
-        let dispatch = self.branch(0x38); // br inside the protected region
-        let body_start = self.code.len();
-        let first_resume = self.async_state.as_ref().expect("async try").resumes.len();
-        let mut ends = Vec::new();
-        self.block(&region.body, 0);
-        if region.body.ty != Type::Never {
-            ends.push(self.leave_exception_region(region.result, ty));
-        }
-
-        let state = self.async_state.as_mut().expect("async try");
-        let resumes = &mut state.resumes[first_resume..];
-        if resumes.is_empty() {
-            self.patch_to(dispatch, body_start);
-        } else {
-            // Each outer dispatcher targets the region entrance, then the
-            // dispatcher inside the region can reach its own resume addresses.
-            let targets = resumes.to_vec();
-            resumes.fill(entry);
-            let resume_state = state.resume_state;
-            self.patch(dispatch);
-            self.indexed(0x11, 0x0c, resume_state); // ldloc
-            self.load_i32((first_resume + 1) as i32);
-            self.op(0x59); // sub
-            self.async_switch(&targets);
-            let normal = self.branch(0x38);
-            self.patch_to(normal, body_start);
-        }
-
-        let protected = start..self.code.len();
+        let (protected, end) = self.async_protected_body(&region.body, region.result, ty);
+        let mut ends: Vec<_> = end.into_iter().collect();
         let mut handlers = Vec::with_capacity(region.catches.len());
         for arm in &region.catches {
             let start = self.code.len();
@@ -373,6 +372,78 @@ impl Body<'_, '_> {
         self.end_region(pending, ends, region.result, ty);
     }
 
+    pub(super) fn async_using(&mut self, region: &UsingRegion, ty: Type, base: usize) {
+        self.expr(&region.resource, base);
+        self.indexed(0x13, 0x0e, region.local); // stloc
+        let pending = self.begin_region(base);
+        let flag = self
+            .async_state
+            .as_ref()
+            .expect("async using")
+            .suspend_flag
+            .unwrap_or_else(|| self.reserve_spill(StackSlot::Value(Type::Bool)));
+        let state = self.async_state.as_mut().expect("async using");
+        state.suspend_flag = Some(flag);
+        state.cleanup_depth += 1;
+        let (protected, end) = self.async_protected_body(&region.body, region.result, ty);
+        self.async_state
+            .as_mut()
+            .expect("async using")
+            .cleanup_depth -= 1;
+
+        let handler = self.code.len();
+        // A suspension leaves all CLR regions. Keep source resources live in
+        // the frame until a resumed invocation actually exits their scope.
+        self.indexed(0x11, 0x0c, flag); // ldloc
+        let suspended = self.branch(0x3a); // brtrue
+        self.expr(&region.dispose, 0);
+        self.patch(suspended);
+        self.op(0xdc); // endfinally
+        self.clauses.push(ExceptionClause {
+            protected,
+            handler: handler..self.code.len(),
+            class: None,
+        });
+        self.end_region(pending, end, region.result, ty);
+    }
+
+    fn async_protected_body(
+        &mut self,
+        body: &Block,
+        result: Option<u16>,
+        ty: Type,
+    ) -> (std::ops::Range<usize>, Option<usize>) {
+        let entry = self.code.len();
+        self.op(0x00); // resume dispatch reaches this point outside the protected body
+        let start = self.code.len();
+        let dispatch = self.branch(0x38); // br inside the protected region
+        let body_start = self.code.len();
+        let first_resume = self.async_state.as_ref().expect("async try").resumes.len();
+        self.block(body, 0);
+        let end = (body.ty != Type::Never).then(|| self.leave_exception_region(result, ty));
+
+        let state = self.async_state.as_mut().expect("async try");
+        let resumes = &mut state.resumes[first_resume..];
+        if resumes.is_empty() {
+            self.patch_to(dispatch, body_start);
+        } else {
+            // Each outer dispatcher targets the region entrance, then the
+            // dispatcher inside the region can reach its own resume addresses.
+            let targets = resumes.to_vec();
+            resumes.fill(entry);
+            let resume_state = state.resume_state;
+            self.patch(dispatch);
+            self.indexed(0x11, 0x0c, resume_state); // ldloc
+            self.load_i32((first_resume + 1) as i32);
+            self.op(0x59); // sub
+            self.async_switch(&targets);
+            let normal = self.branch(0x38);
+            self.patch_to(normal, body_start);
+        }
+
+        (start..self.code.len(), end)
+    }
+
     fn async_switch(&mut self, targets: &[usize]) {
         self.op(0x45); // switch
         self.code
@@ -385,21 +456,36 @@ impl Body<'_, '_> {
     }
 
     pub(super) fn async_return(&mut self, value: Option<&Expr>, base: usize) {
-        let mut stored = None;
         if let Some(value) = value {
             self.expr(value, base);
             if value.ty == Type::Never {
                 return;
             }
-            if base != 0 && value.ty != Type::Void {
-                stored = self.spill(StackSlot::Value(value.ty));
+            if value.ty != Type::Void {
+                let output = self.async_state.as_ref().expect("async return").plan.output;
+                let slot = match self.return_slot {
+                    Some(slot) => slot,
+                    None => {
+                        let slot = self.reserve_spill(StackSlot::Value(output));
+                        self.return_slot = Some(slot);
+                        slot
+                    }
+                };
+                self.indexed(0x13, 0x0e, slot); // stloc
             }
         }
         self.discard_above(base, 0);
-        if let Some(slot) = stored {
-            self.indexed(0x11, 0x0c, slot);
-        }
-        self.complete_async(value.map_or(Type::Void, |value| value.ty));
+        // Complete the task only after all enclosing cleanup has succeeded.
+        let jump = self.branch(if self.region_spills.is_empty() {
+            0x38
+        } else {
+            0xdd
+        });
+        self.async_state
+            .as_mut()
+            .expect("async return")
+            .completion_jumps
+            .push(jump);
     }
 
     fn complete_async(&mut self, output: Type) {

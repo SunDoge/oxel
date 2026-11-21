@@ -87,6 +87,17 @@ pub(super) fn emit(
     references: &References,
     tests: Option<crate::TestOptions<'_>>,
 ) -> Result<Vec<u8>, Diagnostic> {
+    emit_with_debug(program, sources, name, references, tests, None)
+}
+
+pub(super) fn emit_with_debug(
+    program: &Program<'_>,
+    sources: &[&str],
+    name: &str,
+    references: &References,
+    tests: Option<crate::TestOptions<'_>>,
+    debug_paths: Option<&[&std::path::Path]>,
+) -> Result<Vec<u8>, Diagnostic> {
     let kind = if program.entry.is_some() {
         AssemblyKind::Executable
     } else {
@@ -99,7 +110,7 @@ pub(super) fn emit(
             "invalid assembly name or name conflicts with a reference",
         ));
     }
-    assembly::write(program, sources, name, references, tests)
+    assembly::write(program, sources, name, references, tests, debug_paths)
 }
 
 #[derive(Clone, Copy)]
@@ -167,6 +178,7 @@ struct Body<'a, 'refs> {
     return_jumps: Vec<usize>,
     return_slot: Option<u16>,
     async_state: Option<asynchronous::State>,
+    debug_points: Option<Vec<(usize, Span)>>,
 }
 
 impl<'a, 'refs> Body<'a, 'refs> {
@@ -196,6 +208,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
             return_jumps: Vec::new(),
             return_slot: None,
             async_state: None,
+            debug_points: None,
         }
     }
 
@@ -215,7 +228,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
         }
     }
 
-    fn write(&mut self, output: &mut Writer, span: Span) -> Result<(), Diagnostic> {
+    fn write(&mut self, output: &mut Writer, span: Span) -> Result<u32, Diagnostic> {
         if self.spill_overflow || self.clauses.len() > (0xff_ffff - 4) / 24 {
             return Err(Diagnostic::new(
                 "E0402",
@@ -259,7 +272,7 @@ impl<'a, 'refs> Body<'a, 'refs> {
                 output.write_u32(clause.class.unwrap_or(0));
             }
         }
-        Ok(())
+        Ok(locals_token)
     }
 
     fn op(&mut self, opcode: u8) {
@@ -546,6 +559,9 @@ impl<'a, 'refs> Body<'a, 'refs> {
     }
 
     fn expr(&mut self, expr: &Expr, base: usize) {
+        if let Some(points) = &mut self.debug_points {
+            points.push((self.code.len(), expr.span));
+        }
         if !matches!(expr.ty, Type::Never | Type::Void) {
             self.max_stack = self.max_stack.max(base + 1);
         }
@@ -1010,6 +1026,10 @@ impl<'a, 'refs> Body<'a, 'refs> {
     }
 
     fn using_region(&mut self, region: &UsingRegion, ty: Type, base: usize) {
+        if self.async_state.is_some() {
+            self.async_using(region, ty, base);
+            return;
+        }
         self.expr(&region.resource, base);
         self.indexed(0x13, 0x0e, region.local); // stloc
         let pending = self.begin_region(base);

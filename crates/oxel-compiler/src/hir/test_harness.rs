@@ -129,6 +129,7 @@ pub(super) fn runner<'src>(
         internal: true,
         name: "<oxel_test_main>".into(),
         span,
+        debug_span: None,
         signature: Signature {
             type_arity: 0,
             bounds: Vec::new(),

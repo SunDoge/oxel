@@ -19,6 +19,9 @@ struct CommandLine {
     /// Read project inputs from this oxel.toml file.
     #[usage(long, global)]
     manifest_path: Option<PathBuf>,
+    /// Include embedded source debug symbols when compiling or running.
+    #[usage(long, global)]
+    debug: bool,
     /// Resolve .NET framework references from the selected SDK.
     #[usage(long, global)]
     framework: bool,
@@ -173,6 +176,7 @@ pub(super) enum Action {
 pub(super) struct Options {
     pub action: Action,
     pub format: Format,
+    pub debug: bool,
     pub framework: bool,
     pub locked: bool,
     pub manifest_path: Option<PathBuf>,
@@ -214,6 +218,12 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
         && argv.contains(&OsStr::new("--"))
     {
         return Err(usage_error(format, "only oxel run and dev accept --"));
+    }
+    if parsed.debug && !matches!(parsed.command, Command::Compile(_) | Command::Run(_)) {
+        return Err(usage_error(
+            format,
+            "--debug is available for oxel compile and run",
+        ));
     }
     let mut native = false;
     let mut arguments = Vec::new();
@@ -277,6 +287,7 @@ pub(super) fn parse() -> Result<Options, ExitCode> {
     Ok(Options {
         action,
         format,
+        debug: parsed.debug,
         framework: parsed.framework,
         locked: parsed.locked,
         manifest_path: parsed.manifest_path,

@@ -230,6 +230,7 @@ pub(crate) struct Program<'src> {
     pub functions: Vec<Arc<Function>>,
     pub current_function_starts: Vec<usize>,
     pub structs: Vec<Struct<'src>>,
+    pub omitted_structs: Vec<usize>,
     pub instances: Vec<TypeInstance>,
     pub entry: Option<usize>,
     pub kind: AssemblyKind,
@@ -309,6 +310,8 @@ struct Structs<'src, 'refs> {
     field_info_used: AtomicBool,
     builtin_option: Option<usize>,
     option_used: AtomicBool,
+    builtin_result: Option<usize>,
+    result_used: AtomicBool,
 }
 
 impl<'src, 'refs> Structs<'src, 'refs> {
@@ -345,6 +348,11 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         if builtin_option {
             names.insert(Cow::Borrowed("Option"), declarations.len());
         }
+        let builtin_result = !names.contains_key("Result");
+        let result_id = declarations.len() + usize::from(builtin_option);
+        if builtin_result {
+            names.insert(Cow::Borrowed("Result"), result_id);
+        }
         let mut types = Self {
             references,
             names,
@@ -354,6 +362,7 @@ impl<'src, 'refs> Structs<'src, 'refs> {
                 .iter()
                 .map(|item| item.type_parameters.len())
                 .chain(builtin_option.then_some(1))
+                .chain(builtin_result.then_some(2))
                 .chain(std::iter::once(0))
                 .collect(),
             interface_types: declarations
@@ -363,10 +372,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
             instances,
             layouts_ready: false,
             deferred_constructor_checks: AtomicBool::new(false),
-            field_info: declarations.len() + usize::from(builtin_option),
+            field_info: result_id + usize::from(builtin_result),
             field_info_used: AtomicBool::new(false),
             builtin_option: builtin_option.then_some(declarations.len()),
             option_used: AtomicBool::new(false),
+            builtin_result: builtin_result.then_some(result_id),
+            result_used: AtomicBool::new(false),
         };
         for declaration in declarations {
             validate_type_parameters(&declaration.type_parameters, declaration.span)?;
@@ -397,6 +408,9 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         }
         if builtin_option {
             types.definitions.push(unions::builtin_option());
+        }
+        if builtin_result {
+            types.definitions.push(unions::builtin_result());
         }
         types.definitions.push(constants::builtin_field_info());
         types.declare_implementations(implementations)?;
@@ -768,6 +782,12 @@ impl<'src, 'refs> Structs<'src, 'refs> {
         {
             self.option_used.store(true, Ordering::Relaxed);
             compilation::record_builtin(compilation::OPTION);
+        }
+        if let InstanceKind::Struct(definition) = kind
+            && self.builtin_result == Some(definition)
+        {
+            self.result_used.store(true, Ordering::Relaxed);
+            compilation::record_builtin(compilation::RESULT);
         }
         Ok(match kind {
             InstanceKind::External(_) if external_value => Type::ConstructedClrStruct(id),
@@ -1220,6 +1240,7 @@ pub(crate) struct Function {
     pub internal: bool,
     pub name: Box<str>,
     pub span: Span,
+    pub debug_span: Option<Span>,
     pub signature: Signature,
     pub parameter_names: Vec<Option<Box<str>>>,
     pub captures_environment: bool,
@@ -1557,25 +1578,30 @@ fn finish_program<'src>(
             .as_ref()
             .map(|entry| entry.install(&mut functions))
     };
-    let mut structs = scope.types.definitions;
-    if !scope.types.field_info_used.load(Ordering::Relaxed) {
-        structs.pop();
-    }
+    let structs = scope.types.definitions;
+    let omitted_structs = [
+        (scope.types.builtin_option, &scope.types.option_used),
+        (scope.types.builtin_result, &scope.types.result_used),
+        (Some(scope.types.field_info), &scope.types.field_info_used),
+    ]
+    .into_iter()
+    .filter_map(|(id, used)| {
+        if used.load(Ordering::Relaxed) {
+            None
+        } else {
+            id
+        }
+    })
+    .collect();
     let instances = match Arc::try_unwrap(scope.types.instances) {
         Ok(instances) => instances.into_inner().expect("type interner").values,
         Err(instances) => instances.read().expect("type interner").values.clone(),
     };
-    if let Some(last) = structs.last()
-        && last.builtin
-        && last.name == "Option"
-        && !scope.types.option_used.load(Ordering::Relaxed)
-    {
-        structs.pop();
-    }
     Ok(Program {
         functions,
         current_function_starts: Vec::new(),
         structs,
+        omitted_structs,
         instances,
         entry,
         kind,
@@ -2142,6 +2168,10 @@ impl<'ast, 'src> ModuleScope<'ast, 'src, '_> {
                 function.name.into()
             },
             span: function.name_span,
+            debug_span: match &function.body {
+                syntax::FunctionBody::Managed(source) => Some(source.span),
+                syntax::FunctionBody::Native(_) => None,
+            },
             signature: signature.clone(),
             parameter_names: function
                 .parameters
@@ -4643,12 +4673,6 @@ impl<'a, 'src> Checker<'a, 'src> {
         dispose: Member,
         span: Span,
     ) -> Checked<(ExprKind, Type)> {
-        if self.async_fn {
-            return Err(asynchronous::error(
-                span,
-                "resource cleanup with 'using' or CLR enumeration is not yet supported in async bodies",
-            ));
-        }
         let dispose = local_interface_call(local, resource.ty, dispose, Type::Void, span);
         let ty = body.ty;
         let result = self.exception_result(ty, span)?;

@@ -9,6 +9,8 @@ description = "Compiler and incremental analysis engine for the CLR-native oxel 
 [dependencies]
 blake3.workspace = true
 clrmeta = "0.1"
+flate2 = "1"
 object = { version = "0.38", default-features = false, features = ["read_core", "write", "pe"] }
 rayon = "1.12"
 self_cell = "1.3"
+sha2 = "0.10"

@@ -1,6 +1,6 @@
 use std::{fs, path::Path, sync::Arc};
 
-use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+use lsp_types::{Position, Range, TextDocumentContentChangeEvent, TextEdit};
 use oxel::{DocumentAnalysis, Occurrence, Span};
 
 pub(super) struct Document {
@@ -56,6 +56,19 @@ impl Document {
             self.version = Some(version);
         }
         Some(changed)
+    }
+
+    pub fn format(&self) -> Option<TextEdit> {
+        let formatted = oxel::format_source(&self.text).ok()?;
+        (formatted != *self.text).then(|| {
+            TextEdit::new(
+                self.range(Span {
+                    start: 0,
+                    end: self.text.len(),
+                }),
+                formatted,
+            )
+        })
     }
 
     pub fn occurrence(&self, position: Position) -> Option<&Occurrence> {
