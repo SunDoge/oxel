@@ -13,6 +13,72 @@ use serde_json::Value;
 
 use super::{BODY_STEPS, WORKLOAD_FUNCTIONS, body_workload, completed, measure, output};
 
+pub(super) fn compare_interpolation(oxel: &str, directory: &Path) {
+    const ITERATIONS: f64 = 1_000_000.0;
+    let sdk = Roslyn::new(directory);
+    let source = include_str!("interpolation.oxel");
+    fs::write(directory.join("interpolation.oxel"), source).unwrap();
+    fs::write(
+        directory.join("interpolation.cs"),
+        include_str!("interpolation.cs"),
+    )
+    .unwrap();
+    completed(&mut sdk.compile(
+        "interpolation.cs",
+        "interpolation-csharp.dll",
+        [
+            sdk.reference("System.Runtime.dll"),
+            sdk.reference("System.Console.dll"),
+        ],
+    ));
+    let compile = |cli: &Path, path: &Path| {
+        let artifact = output(Command::new(cli).current_dir(path).args([
+            "compile",
+            "--framework",
+            "interpolation.oxel",
+        ]));
+        path.join(std::str::from_utf8(&artifact).unwrap().trim())
+    };
+    let current = compile(Path::new(oxel), directory);
+    let config = current.with_extension("runtimeconfig.json");
+    let mut workloads = vec![
+        ("Oxel", current),
+        ("C#", directory.join("interpolation-csharp.dll")),
+    ];
+    if let Some(previous) = std::env::var_os("OXEL_BENCH_PREVIOUS_CLI") {
+        let previous = PathBuf::from(previous).canonicalize().unwrap();
+        let path = directory.join("previous");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("interpolation.oxel"), source).unwrap();
+        workloads.insert(0, ("Oxel previous", compile(&previous, &path)));
+    }
+    let mut samples: Vec<_> = workloads.iter().map(|_| Vec::new()).collect();
+    for _ in 0..7 {
+        for ((_, image), samples) in workloads.iter().zip(&mut samples) {
+            let stdout = output(&mut managed_exec(directory, &config, image));
+            let values: Vec<u64> = std::str::from_utf8(&stdout)
+                .unwrap()
+                .lines()
+                .map(|line| line.parse().unwrap())
+                .collect();
+            let &[checksum, ticks, frequency, bytes] = values.as_slice() else {
+                panic!("expected checksum, elapsed ticks, timer frequency, and allocated bytes");
+            };
+            assert_eq!(checksum, 6_000_000);
+            samples.push((ticks as f64 * 1e9 / frequency as f64, bytes as f64));
+        }
+    }
+    for ((label, _), samples) in workloads.iter().zip(&mut samples) {
+        samples.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (ns, bytes) = samples[samples.len() / 2];
+        println!(
+            "{label:<14} {:>6.2} ns/op {:>6.2} B/op",
+            ns / ITERATIONS,
+            bytes / ITERATIONS
+        );
+    }
+}
+
 pub(super) fn compare_csharp(oxel: &str, directory: &Path) {
     let sdk = Roslyn::new(directory);
     fs::write(directory.join("numeric.oxel"), body_workload(false)).unwrap();

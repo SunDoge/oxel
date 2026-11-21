@@ -228,6 +228,10 @@ fn postfix_await_suspends_and_resumes_without_blocking_the_caller() {
             slot.Value
         }
 
+        async fn format_after_suspend(task: System.Threading.Tasks.Task<i32>, prefix: string?) -> string {
+            $"{prefix}{12}:{task.await}"
+        }
+
         async fn main() {
             check_failures();
             System.Console.WriteLine(read(System.Threading.Tasks.Task.FromResult(28)).await);
@@ -238,13 +242,18 @@ fn postfix_await_suspends_and_resumes_without_blocking_the_caller() {
             System.Console.WriteLine(slot.Value);
             gate.SetResult();
             System.Console.WriteLine(pending.await);
+            let input = new System.Threading.Tasks.TaskCompletionSource<i32>();
+            let formatted = format_after_suspend(input.Task, null);
+            assert(!formatted.IsCompleted);
+            input.SetResult(30);
+            System.Console.WriteLine(formatted.await);
         }
     "#).unwrap();
     assert_eq!(
         success(oxel(project, &["run", "--framework", "main.oxel"]))
             .lines()
             .collect::<Vec<_>>(),
-        ["preserved", "True", "30", "3", "17"]
+        ["preserved", "True", "30", "3", "17", "12:30"]
     );
 
     for (source, message) in [

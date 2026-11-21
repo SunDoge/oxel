@@ -10,6 +10,11 @@ use std::{
 };
 
 fn main() {
+    if std::env::var_os("OXEL_BENCH_INTERPOLATION").is_some() {
+        let directory = tempfile::tempdir().unwrap();
+        managed::compare_interpolation(env!("CARGO_BIN_EXE_oxel"), directory.path());
+        return;
+    }
     let hello = include_str!("../../../examples/hello.oxel");
     let mut generated = String::new();
     for index in 0..500 {

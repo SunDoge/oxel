@@ -1,0 +1,25 @@
+fn work(iterations: i32, left: string, right: string) -> i32 {
+    let mut checksum = 0;
+    let mut i = 0;
+    while i < iterations {
+        let text = $"{left}:{right}";
+        checksum += text.Length;
+        i += 1;
+    }
+    checksum
+}
+
+fn main() {
+    let left = "key";
+    let right = "42";
+    work(200000, left, right);
+    let before = System.GC.GetAllocatedBytesForCurrentThread();
+    let start = System.Diagnostics.Stopwatch.GetTimestamp();
+    let checksum = work(1000000, left, right);
+    let elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - start;
+    let bytes = System.GC.GetAllocatedBytesForCurrentThread() - before;
+    System.Console.WriteLine(checksum);
+    System.Console.WriteLine(elapsed);
+    System.Console.WriteLine(System.Diagnostics.Stopwatch.Frequency);
+    System.Console.WriteLine(bytes);
+}

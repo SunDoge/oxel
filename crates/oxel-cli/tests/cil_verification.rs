@@ -40,6 +40,7 @@ fn verifies_managed_assemblies_with_ilverify() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     for (name, framework) in [
         ("hello.oxel", false),
+        ("interpolation.oxel", false),
         ("result_main.oxel", false),
         ("async_main.oxel", true),
         ("await.oxel", true),

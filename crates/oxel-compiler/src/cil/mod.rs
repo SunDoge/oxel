@@ -1121,6 +1121,28 @@ impl<'a, 'refs> Body<'a, 'refs> {
     }
 
     fn interpolation(&mut self, parts: &[Expr], base: usize) {
+        if parts.len() <= 4 {
+            let checkpoint = self.pending.len();
+            for (index, part) in parts.iter().enumerate() {
+                self.expr(part, base + index);
+                if part.ty == Type::Never {
+                    self.pending.truncate(checkpoint);
+                    return;
+                }
+                self.interpolate_object(part.ty);
+                self.keep_operand(StackSlot::Value(Type::NullableString));
+            }
+            self.pending.truncate(checkpoint);
+            // The two-argument overload also turns a single null part into "".
+            if parts.len() == 1 {
+                self.op(0x14); // ldnull
+                self.max_stack = self.max_stack.max(base + 2);
+            }
+            let concat = self.metadata.string_fixed_concat(parts.len().max(2));
+            self.call(concat);
+            return;
+        }
+
         self.max_stack = self.max_stack.max(base + 3);
         self.load_i32(parts.len() as i32);
         let string_type = self.metadata.runtime_type_token(Type::String);
@@ -1140,14 +1162,18 @@ impl<'a, 'refs> Body<'a, 'refs> {
             if part.ty == Type::Never {
                 return;
             }
-            if part.ty.non_nullable() == Type::Object {
-                let convert = self.metadata.string_from_object();
-                self.token_instruction(0x28, convert); // call
-            }
+            self.interpolate_object(part.ty);
             self.op(0xa2); // stelem.ref
         }
         let concat = self.metadata.string_array_concat();
-        self.token_instruction(0x28, concat); // call
+        self.call(concat);
+    }
+
+    fn interpolate_object(&mut self, ty: Type) {
+        if ty.non_nullable() == Type::Object {
+            let convert = self.metadata.string_from_object();
+            self.call(convert);
+        }
     }
 
     fn match_expression(&mut self, matched: &Match, base: usize) {

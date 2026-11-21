@@ -25,8 +25,8 @@ use object::{
 };
 
 use super::{
-    Body, FIELD_DEF, MEMBER_REF, METHOD_DEF, METHOD_SPEC, STAND_ALONE_SIG, STRING_OPERATIONS,
-    StackSlot, TYPE_DEF, TYPE_SPEC, WRITE_LINE_OVERLOADS,
+    Body, FIELD_DEF, MEMBER_REF, METHOD_DEF, METHOD_SPEC, STAND_ALONE_SIG, STRING_CONCAT,
+    STRING_OPERATIONS, StackSlot, TYPE_DEF, TYPE_SPEC, WRITE_LINE_OVERLOADS,
 };
 use crate::{
     ArgumentMode, AssemblyKind, Diagnostic, References, Span, TestOptions,
@@ -554,6 +554,7 @@ pub(super) struct Tables<'refs> {
     string_from_object: Option<u32>,
     error_writer_members: Option<(u32, u32)>,
     string_array_concat: Option<u32>,
+    string_fixed_concat: [Option<u32>; 2],
     nullable_ctors: [Option<u32>; 2],
     first_fields: Vec<u32>,
     members: Vec<MemberRefRow>,
@@ -716,6 +717,7 @@ impl<'refs> Tables<'refs> {
             string_from_object: None,
             error_writer_members: None,
             string_array_concat: None,
+            string_fixed_concat: [None; 2],
             nullable_ctors: [None; 2],
             first_fields: vec![0; source_types.len()],
             members: Vec::new(),
@@ -1445,6 +1447,25 @@ impl<'refs> Tables<'refs> {
         let signature = self.blobs.add(&[0x00, 1, 0x0e, 0x1d, 0x0e]); // string (string[])
         let member = self.push_member(STRING_REF, "Concat", signature);
         self.string_array_concat = Some(member);
+        MEMBER_REF | member
+    }
+
+    pub(super) fn string_fixed_concat(&mut self, arity: usize) -> u32 {
+        if arity == 2 {
+            return STRING_CONCAT;
+        }
+        let slot = arity - 3;
+        if let Some(member) = self.string_fixed_concat[slot] {
+            return MEMBER_REF | member;
+        }
+        let signature = self.method_signature(
+            &[Type::String; 4][..arity],
+            Type::String,
+            Invocation::Static,
+            0,
+        );
+        let member = self.push_member(STRING_REF, "Concat", signature);
+        self.string_fixed_concat[slot] = Some(member);
         MEMBER_REF | member
     }
 

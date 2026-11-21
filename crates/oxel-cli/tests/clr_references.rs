@@ -3615,6 +3615,8 @@ fn formats_clr_interpolation_parts_in_evaluation_order() {
         r#"
         fn main() {
             System.Console.WriteLine($"{Probe.Create(1)}|{Probe.Create(3)}|{Probe.Trace}");
+            Probe.Trace = 0;
+            System.Console.WriteLine($"{Probe.Create(1)}{Probe.Create(3)}{Probe.Trace}");
             let missing = $"{Probe.UnexpectedNull()}";
             System.Console.WriteLine(missing is string && missing == "");
         }
@@ -3629,7 +3631,7 @@ fn formats_clr_interpolation_parts_in_evaluation_order() {
         .unwrap();
     assert_eq!(
         successful(output).lines().collect::<Vec<_>>(),
-        ["tag|tag|1234", "True"],
+        ["tag|tag|1234", "tagtag1234", "True"],
     );
 }
 

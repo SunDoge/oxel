@@ -1043,6 +1043,8 @@ The script generates 1,024 equivalent functions across 32 files, warms up each w
 
 The opt-in framework benchmark times `check --framework` on the file line-counting example, including SDK discovery and CLR metadata loading. The opt-in Go comparison uses equivalent sources with 1,024 functions that perform integer arithmetic and branching. It launches each compiler directly with one worker and includes writing its output. Oxel emits a CLR assembly and runtime configuration. Go emits an object file using the compiler behind `go tool compile`. The comparison covers this single-file workload with warm filesystem caches.
 
+Use `OXEL_BENCH_INTERPOLATION=1 cargo bench --bench compiler --locked` to compare short string interpolation in Oxel and C# under the same CoreCLR. Set `OXEL_BENCH_PREVIOUS_CLI=/path/to/old/oxel` to include a previous Oxel compiler. The benchmark checks the result and reports median time and managed bytes allocated per interpolation over seven warmed-up processes per compiler. Oxel uses fixed-arity CLR `String.Concat` overloads for up to four parts, removing the temporary string array.
+
 ## License
 
 Oxel is licensed under the Apache License, Version 2.0. [License text](LICENSE)
